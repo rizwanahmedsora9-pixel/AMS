@@ -1,0 +1,30 @@
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Virtual environments & secrets ---
+.env
+.venv/
+venv/
+env/
+
+# --- Runtime data: SQLite databases, secret_key, logs, backups, import artefacts ---
+# Everything under instance/ is created and managed by the running app.
+instance/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+errorlog.txt
+
+# --- OS / editor noise ---
+.DS_Store
+Thumbs.db
+*.swp
