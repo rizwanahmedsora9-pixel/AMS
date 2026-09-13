@@ -227,19 +227,6 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     register_import_job_routes(app)
 
-    # Public health probe and the config-driven GitHub auto-deploy webhook
-    # (/health, /git-auto-pull). Registered here so they are present under
-    # both wsgi.py (PythonAnywhere) and main.py (local) entry points.
-    try:
-        from app.deploy_routes import register_deploy_routes
-
-        register_deploy_routes(app)
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Deploy routes not registered (config/deploy package issue).",
-            exc_info=True,
-        )
-
     # Compile every Jinja template once at startup so the first request after a
     # worker (re)start doesn't pay a ~200ms+ compile cost for layout.html +
     # the large module pages.  Compilation is side-effect free and the bytecode

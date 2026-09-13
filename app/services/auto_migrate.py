@@ -10,7 +10,7 @@ recorded history of what changed.  From now on, every future schema change
 (new module tables, new columns with defaults, new indexes, …) ships as a
 numbered ``NNNN_*.sql`` file in ``app/migrations/`` and is applied
 automatically on the next application start (which also covers every
-deployment, because the deployer reloads the app).
+deployment, because deploying restarts the app).
 
 How it works
 ------------

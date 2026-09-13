@@ -192,12 +192,6 @@ def register_hooks(app):
         endpoint = request.endpoint or ''
         if endpoint in ('static',) or endpoint.startswith('static.'):
             return None
-        # Server-to-server webhook: it authenticates itself (GitHub HMAC
-        # signature or the shared deploy token) and carries no session, so
-        # gating it on the session CSRF token would reject every GitHub push
-        # with HTTP 400 before the deploy logic ever runs.
-        if endpoint in ('git_auto_pull',):
-            return None
         supplied = request.form.get('_csrf_token') or request.headers.get('X-CSRF-Token') or request.headers.get('X-CSRFToken')
         if supplied and secrets.compare_digest(str(supplied), str(token)):
             return None

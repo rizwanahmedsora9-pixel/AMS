@@ -1,16 +1,12 @@
 """AMS application entrypoint.
 
-Deployment has been centralised into ``config.py`` + the ``deploy/``
-package. This file is now only:
+This file is only:
 
   * ``app`` / ``application``  — the Flask app (created by the factory)
   * a local development server
 
-The GitHub webhook route and the entire auto-deploy pipeline live in
-``app/deploy_routes.py`` and ``deploy/deployer.py`` and are registered on
-the app in the factory, so they work identically under ``wsgi.py``
-(PythonAnywhere) and here. No repository, token, server or path is
-hard-coded — edit ``config.py`` to change the deployment target.
+Deployment automation was removed and will be rebuilt from scratch.
+See README.md ("Deployment" section) for the current status.
 """
 from __future__ import annotations
 
