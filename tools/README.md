@@ -1,7 +1,7 @@
 # AMS System — Tools Directory
 
 This directory contains all operational scripts, organized by safety level.
-**The production application is in the root (`main.py`, `models.py`, `blueprints/`).**
+**The production application is in the repo root (`main.py`, `wsgi.py`, `app/`, `models/`, `blueprints/`).**
 Nothing in this folder is loaded at runtime.
 
 ---

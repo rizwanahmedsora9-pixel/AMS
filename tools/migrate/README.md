@@ -1,16 +1,12 @@
 # AMS Legacy Data Migration Toolkit
 
-> **Status (2026-09-10): SUPERSEDED — kept for reference.** The live migration
-> path is the stdlib-only `migrate tool/` (repo root) + `full_db_sync/`
-> (SQLite `.db`/`.amsdb` transport — see `docs/FULL_DB_SQLITE_SYNC.md`). This
+> **Status: SUPERSEDED — kept for reference.** The live migration path is
+> `full_db_sync/` (SQLite `.db`/`.amsdb` — see the root `README.md`). This
 > XLSX pipeline is retained because (a) its purge contract is the reference
-> the tool's purge was ported from, and (b) old `ALLEXPORT` workbooks may
+> the later purge was ported from, and (b) old `ALLEXPORT` workbooks may
 > still need one-off reads. Steps 01–03 need pandas + openpyxl:
-> `pip install -r requirements-migrate.txt` (repo root). Gate 3's baselines
-> (`EXPECTED_TOTALS`) were refreshed 2026-09-10 from the committed clean
-> export and now match it 13/13. The planned opening-state successor
-> (`MIGRATION_AUDIT.md §H`) was **never built** — that document is a
-> proposal, not a record.
+> `pip install -r requirements-migrate.txt` (repo root). An opening-state
+> (balances-only) successor was proposed and **never built**.
 
 Extract → Clean → Transform → Load for the legacy AMS `ALLEXPORT` workbook into a
 fresh application database.  Everything here is pure pandas + stdlib (no app import

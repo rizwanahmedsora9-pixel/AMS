@@ -319,7 +319,7 @@ def validate_config(require_secrets: bool = False, check_paths: bool = False) ->
         if not venv_python.exists():
             problems.append(
                 f"Virtualenv python not found: {venv_python} "
-                "(create it per DEPLOYMENT.md)."
+                "(create it per README.md)."
             )
         # The WSGI file lives in /var/www which the deploy user can read;
         # absence means the web app has not been created yet.
