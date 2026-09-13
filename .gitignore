@@ -28,3 +28,6 @@ errorlog.txt
 .DS_Store
 Thumbs.db
 *.swp
+
+# Deployment secret (never commit a live webhook secret)
+deploy_secret.txt
