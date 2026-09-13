@@ -1,4 +1,4 @@
-"""Regression tests for every defect in QA_FULL_AUDIT.md (PRED-001..PRED-014).
+"""Regression tests for PRED-001..PRED-014 (concurrent bills, CSRF, Open-Khata, wipe FK, …).
 
 Each test drives the real HTTP layer and asserts the invariant the audit
 described.  Where the audit required raw-DB ground truth, the test reads the

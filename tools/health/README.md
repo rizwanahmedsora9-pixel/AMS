@@ -33,28 +33,15 @@ History is kept in `instance/health/preflight.log` (last 100 runs by default;
 
 ```cron
 # every morning before work — quiet, so cron stays silent while healthy
-0 8 * * *  cd /home/user/ams99 && .venv/bin/python tools/health/preflight_check.py --quiet >/dev/null 2>&1 \
+0 8 * * *  cd /path/to/AMS && .venv/bin/python tools/health/preflight_check.py --quiet >/dev/null 2>&1 \
            || echo "AMS PREFLIGHT BLOCKERS" | mail -s "AMS preflight" ops@example.local
 
-# right after every Full Raw Import / restore
 # weekly deep check (the app's own report — still read-only)
-15 8 * * 1  cd /home/user/ams99 && .venv/bin/python tools/consistency_report.py >> instance/health/weekly.log 2>&1
+15 8 * * 1  cd /path/to/AMS && .venv/bin/python tools/consistency_report.py >> instance/health/weekly.log 2>&1
 ```
 
-## Current baseline (migrated DB, 2026-08-17)
-
-| Status | Item | Count | Blocks new transactions? |
-|---|---|---|---|
-| ✅ fixed | negative stock blocked (settings row was missing) | 49 materials | was YES → now allowed |
-| 👁 watch | duplicate client names (ambiguous lookup) | 2 pairs | no |
-| 👁 watch | duplicate manual bill numbers across modules | 1,355 | no |
-| 👁 watch | orphaned invoices (no linked sale) | 86 | no |
-| 👁 watch | bookings with no pending bill | 186 | no |
-| 👁 watch | inactive clients / materials (kept for FK integrity) | 3 / 1 | no |
-
-Everything else the tool checks (dangling allocations, cancel leaks, counter
-collisions, ledger drift, missing stock entries, missing credit pending bills)
-is currently **0**.
+Run the tool against the current database. Do not treat old migration
+snapshots as live counts.
 
 ## Check meanings & how to fix
 

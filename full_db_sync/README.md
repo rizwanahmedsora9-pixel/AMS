@@ -4,8 +4,7 @@ Full-data moves in AMS use **SQLite database files** (`.amsdb`) instead of the
 legacy ALLEXPORT XLSX workbook.  A snapshot is an exact, verifiable SQLite
 copy of a whole AMS database; an import **cleans all data out of the target
 first** (schema stays) and then copies the file's rows in with their original
-primary keys.  See `../docs/FULL_DB_SQLITE_SYNC.md` for the full design,
-operating rules and the 2026-09-09 refresh report.
+primary keys.  Project-level usage is in the root `README.md`.
 
 The engine is pure stdlib (`sqlite3` only) — it runs inside the Flask app, in
 the CLI, and on any machine that can read a SQLite file.  No pandas, no
