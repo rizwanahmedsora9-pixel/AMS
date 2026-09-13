@@ -176,9 +176,152 @@ push to the configured branch runs `git pull --ff-only origin <branch>` and
 touches the PythonAnywhere WSGI file to request a reload. No API token,
 GitHub Actions workflow, scheduler, or Flask CSRF exemption is required.
 
-### One-time PythonAnywhere setup
+### Install and configure with `setup_Deploy.py` (recommended)
+
+`setup_Deploy.py` is a single-file, standard-library installer for this deployment.
+It can bootstrap a fresh account, repair a broken one, and verify a working one. It
+never imports the Flask application, never starts a second server, and never touches
+the database files.
+
+Obtain it in one of two ways:
+
+* download the raw file from the repository (this works before a merge too, but the
+  branch must contain the file):
+
+  ```bash
+  # use main once this change is merged; until then use the branch that contains it
+  curl -fsSL -o ~/setup_Deploy.py \
+    https://raw.githubusercontent.com/rizwanahmedsora9-pixel/AMS/main/setup_Deploy.py
+  ```
+
+* or copy it from a checkout you already have (`cp /path/to/AMS/setup_Deploy.py ~/`).
+
+Run it in a **PythonAnywhere Bash console** on the production account:
+
+```bash
+cd /home/rehmanahmed        # the production checkout; there is no AMS subfolder
+python3 setup_Deploy.py     # guided: prints a plan and asks before material changes
+```
+
+It defaults to `--target /home/rehmanahmed`, `--repo
+https://github.com/rizwanahmedsora9-pixel/AMS.git`, `--branch main` and
+`--domain rehmanahmed.pythonanywhere.com`; `--target/--repo/--branch/--domain`
+override those for a different account or a staging copy.
+
+| Command | What it does |
+| --- | --- |
+| `python3 setup_Deploy.py --check-only` | inspects and validates only, writes nothing (safe on a live site) |
+| `python3 setup_Deploy.py --dry-run` | prints the plan and every command it would run, changes nothing |
+| `python3 setup_Deploy.py --yes` | unattended run: confirms the material changes it would normally ask about |
+| `python3 setup_Deploy.py --show-secret` | prints the webhook secret once, privately, for the GitHub box |
+| `python3 setup_Deploy.py --restore-installer-file` | archives a locally edited `setup_Deploy.py` and restores the tracked copy |
+| `python3 setup_Deploy.py --help` | all options (python, venv, wsgi file, retries, timeouts, skip-…) |
+
+Exit codes: `0` everything required is done, `2` done except the listed manual steps,
+`1` blocked/failed — so a script can tell "needs a human" from "broken".
+
+#### What the installer does automatically
+
+* Inspects first and prints what it found: checkout, origin, branch, local edits,
+  hook, WSGI file, secret, virtualenv, requirements, SQLite files, existing state.
+  It never assumes the home directory is empty.
+* Bootstraps the home-directory checkout (`git init`, `remote add`, `fetch`,
+  `checkout -b <branch> --track origin/<branch>`) and adds the `*` rule to
+  `.git/info/exclude` so unrelated account files stay invisible to Git.
+* Archives whatever `setup_Deploy.py` already sits in the checkout into
+  `<checkout>/instance/setup/backups/<timestamp>/downloaded--setup_Deploy.py`
+  before the checkout can replace it, and copies any account file that a tracked
+  AMS path would overwrite (with a manifest), asking before continuing.
+* Updates an existing checkout with `git fetch` + `git merge --ff-only origin/<branch>`.
+  It never runs `git reset --hard`, `git clean`, `git stash`, or a forced checkout;
+  modified tracked files stop the update and are reported instead of discarded.
+* Creates or reuses `/home/rehmanahmed/.venv` (using the same Python version as the
+  Web app) and installs `requirements.txt` with that virtualenv's own Python.
+  Transient network failures are retried a bounded number of times; real errors are
+  reported with pip's message.
+* Creates `instance/deploy_secret.txt` with `secrets.token_hex(32)` and mode `0600`,
+  keeps a valid existing secret (only tightening the mode), and rotates only when you
+  ask (`--rotate-secret`) or confirm. Git history is checked for the previously
+  committed secret and a stale root-level copy is offered for quarantine.
+* Writes exactly one managed block into the WSGI file shown in the Web tab:
+
+  ```python
+  # >>> AMS deployment setup (managed by setup_Deploy.py) >>>
+  ...
+  os.environ["AMS_WSGI_FILE"] = "/var/www/rehmanahmed_pythonanywhere_com_wsgi.py"
+  os.environ["AMS_DEPLOY_BRANCH"] = "main"
+  os.environ.setdefault("SQLITE_JOURNAL_MODE", "DELETE")
+  os.environ.setdefault("AMS_HTTPS", "1")
+  from wsgi import application
+  # <<< AMS deployment setup (managed by setup_Deploy.py) <<<
+  ```
+
+  Everything outside the markers is preserved (host setup, a custom `APP_DB_PATH`,
+  deliberate overrides). The file is backed up first, validated as Python before
+  writing, and the block is replaced rather than duplicated on later runs. A
+  hand-written AMS import is adopted only after a confirmation, keeping the old line
+  as a comment; another application's WSGI file is refused untouched, and the
+  installer never guesses a WSGI file name that does not exist.
+* Verifies in stages (files installed → virtualenv/dependencies → secret → WSGI
+  configured → site reachable → `/deploy/health` → signature accepted/unsigned
+  rejected → webhook → real push→pull), and writes a redacted log and report under
+  `<checkout>/instance/setup/`.
+
+#### What still needs you (authentication or manual action)
+
+* **Web app settings.** With a PythonAnywhere API token (`export API_TOKEN=…`,
+  or `--api-token-file`) the installer reads the Web tab configuration and updates
+  source directory/working directory, virtualenv, Python version and the `/static/`
+  mapping through the documented API, then reloads. Without a token it changes
+  nothing and prints the exact Web tab steps: Source code and Working directory
+  `/home/rehmanahmed`, virtualenv `/home/rehmanahmed/.venv`, `/static/` →
+  `/home/rehmanahmed/static`. Creating a web app through the API depends on the
+  account type — if it is refused, the installer says so and prints the manual steps.
+* **The GitHub webhook.** With a token (`GITHUB_TOKEN`/`GH_TOKEN`, the `gh` CLI, or
+  `--github-token-file`) it creates or verifies the webhook
+  (`https://rehmanahmed.pythonanywhere.com/deploy`, content type
+  `application/json`, push events only, SSL verification on, secret from the server
+  file) and pings it to confirm a `200`/`pong`. Without a token it prints the
+  two-field GitHub form. An existing webhook is never duplicated and its secret is
+  never changed unless you pass `--update-webhook`.
+* **The first real push.** Only a signed push → pull → reload proves the pipeline.
+  The installer deliberately does not create a commit to test it; push a commit to
+  the deployed branch and check *Recent Deliveries* for `Deployed <sha>; WSGI reload
+  requested`.
+* **Secrets.** Tokens come from the environment, a `0600` file, or a hidden prompt —
+  never from chat, never into Git, never into the log or report (only fingerprints).
+  `--show-secret` is the one explicit, private display step for pasting the secret
+  into GitHub; clear the screen afterwards.
+
+#### Rerun, recovery and troubleshooting
+
+* Every run is safe to repeat: it re-detects the state, keeps the existing secret and
+  virtualenv, and rewrites the WSGI block only when it has drifted. `--check-only`
+  revalidates without writing. Writes are atomic, so an interrupted run leaves no
+  half-written file — just rerun it.
+* If a stage fails, the log/report names the stage, the cause and the next action.
+  Common cases:
+  - *hook returns 409 / "working tree is not clean"* — tracked files are modified.
+    Review with `git -C /home/rehmanahmed diff` and commit or restore deliberately.
+    For `setup_Deploy.py` itself use `--restore-installer-file`.
+  - *wrong origin or branch* — the installer refuses and changes nothing; rerun with
+    `--set-origin` / `--switch-branch` once you have confirmed it is right.
+  - *dependencies failed* — the report contains pip's own error; fix it and rerun.
+  - *WSGI file missing or different name* — the installer prints the block to paste
+    and refuses to guess; pass `--wsgi-file` with the exact path from the Web tab
+    (needed for custom domains), or `--create-wsgi-file` for a brand-new app.
+  - *something looks wrong after a change* — every replaced file is in
+    `<checkout>/instance/setup/backups/<timestamp>/` (with a `manifest.json`).
+* Two installers cannot run at once: the second exits with the lock file
+  (`<checkout>/instance/setup/setup.lock`) explained. It does not delete the lock.
+* It never rolls back or restores the live database, never runs the app against the
+  production DB as a "check", and never claims success for an unverified step.
+
+### Manual setup (reference — `setup_Deploy.py` performs these steps)
 
 AMS site: https://rehmanahmed.pythonanywhere.com/
+
+The manual procedure is kept here as documentation of what the installer automates and as a fallback for an account where automation is unavailable.
 
 First merge this change into the branch you deploy (normally `main`), then
 install or update **this** repository on PythonAnywhere. The server checkout's
@@ -293,6 +436,42 @@ pip install -r requirements.txt
   a database snapshot before releases with schema changes. There is no
   automatic rollback or database backup in this hook.
 - The webhook is production WSGI-only; `python main.py` does not mount it.
+
+### What is covered by tests, and what still needs a real server
+
+Automated tests (`tests/test_setup_deploy.py`, run with the rest of the suite) cover,
+in temporary directories with local Git remotes and scripted pip/HTTP — no GitHub or
+PythonAnywhere call is ever made and `/var/www` is never touched:
+
+* fresh install, home-directory bootstrap with account files preserved and the `*`
+  exclude rule in place, idempotent rerun;
+* installer-file collision archived before checkout, colliding home file backed up,
+  non-home checkouts excluding only the installer file;
+* dirty tracked files, wrong origin, wrong branch: refused and left untouched, with
+  `--set-origin` / `--switch-branch` as the explicit remedies;
+* missing interpreter, incompatible virtualenv version, pip failure (transient
+  retried a bounded number of times, permanent not), missing imports;
+* existing secret preserved and permissions tightened, explicit rotation, exposed
+  root-level secret quarantined, and no secret or token ever reaching the log,
+  report, state file or console;
+* custom WSGI content and a custom `APP_DB_PATH` preserved, hand-written AMS import
+  adopted as a comment, another application's WSGI file refused, generated block is
+  valid Python with exactly the required variables;
+* API and webhook stages falling back to printed manual steps without a token, an
+  API refusal changing nothing, bounded HTTP retries, the concurrent-run lock, and
+  `--check-only`/`--dry-run` writing nothing at all;
+* the pre-existing repository suite (including `tests/test_deploy_hook.py`) still
+  passing.
+
+Still to be verified on the real account, because no automated test can prove it:
+
+* whether the **free** PythonAnywhere plan allows the documented webapp / static
+  files / reload API calls (the manual Web tab steps are the fallback), and whether
+  the account may write `/var/www/<domain>_wsgi.py`;
+* a real signed GitHub push → `git pull --ff-only` → WSGI reload, confirmed by a
+  `200` in *Recent Deliveries*;
+* the exact Python version available in the Web tab versus the console used to
+  create the virtualenv (the installer warns when they differ).
 
 ---
 
