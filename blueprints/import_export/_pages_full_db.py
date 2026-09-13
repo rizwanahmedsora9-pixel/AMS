@@ -11,7 +11,7 @@ a whole accounting database):
     POST /import_export/full_db_import
         Uploads a snapshot (.amsdb / .db) and performs a full sync:
         the current database is backed up automatically, EVERY data row of the
-        current database is deleted first ("clean all data in AMSCOPY9"),
+        current database is deleted first ("clean all data in AMS"),
         then every row of the uploaded file is inserted with its original
         primary keys.  Mode 'append' instead keeps existing rows and only
         inserts new primary keys.

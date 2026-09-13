@@ -6,9 +6,9 @@ rentals, clients / suppliers, chart of accounts, cash flow and reconciliation,
 financial ledgers, reports and PDF exports, Excel import / export, plus admin,
 permissions and data-maintenance tooling.
 
-The app is built to run on a **PythonAnywhere** account. `wsgi.py` is the
-production entry point; `main.py` is the local development server. Deployment
-targets live in `config.py` (no secrets in Git).
+`wsgi.py` is the production entry point; `main.py` is the local development
+server. Deployment automation was removed and is being rebuilt from scratch
+(see "Deployment" below).
 
 > **About the old audit files.** This repo used to ship a pile of session
 > reports (`AUDIT_REPORT.md`, `QA_FULL_AUDIT.md`, orphan plans, schema-failure
@@ -42,8 +42,7 @@ automatically on every start via `app/services/auto_migrate.py`.
 ## Layout
 
 ```text
-main.py, wsgi.py        Dev server / PythonAnywhere WSGI
-config.py               Deployment targets (never holds secrets)
+main.py, wsgi.py        Dev server / production WSGI entry point
 app/                    Factory, services, HTTP blueprints, SQL migrations
   app/services/         Accounting, billing, cash flow, ledgers, imports, PDFs
   app/blueprints/       ledgers, masters, misc, ops, reports, sales, system
@@ -55,7 +54,6 @@ static/                 JS/CSS and vendored libraries
 utils/                  Module loader and shared helpers
 tools/                  Maintenance, audit, migration and health scripts
 tests/                  pytest (backend + frontend)
-deploy/                 Webhook deployer and health check (runs inside the live app)
 full_db_sync/           SQLite .amsdb snapshot export/import (stdlib only)
 dummy_data/             Sample workbook generator / verifier
 instance/               Runtime: SQLite DB, secret_key, logs, backups (git-ignored)
@@ -92,7 +90,6 @@ Default first-run admin (empty DB): `Admin` / `Admin@fbm12345`. Change it.
 | `AMS_HTTPS` | unset | `1` for secure / `SameSite=None` cookies |
 | `MAX_UPLOAD_MB` | `256` | Upload size limit |
 | `SQLITE_JOURNAL_MODE` | auto | `DELETE` is forced on PythonAnywhere (no POSIX shm for WAL) |
-| `AMS_WEBHOOK_TOKEN` | **required on the server** | Deploy webhook auth — no hardcoded fallback |
 | `ALLOW_EMPTY_DB` | `1` | Missing DB is a valid first run |
 | `MIGRATIONS_ALLOW_DESTRUCTIVE` | `0` | Permit `DROP`/`DELETE` in SQL migration files |
 
@@ -120,8 +117,8 @@ Do **not** re-open these as if they were still broken:
 | Area | Current behaviour |
 |---|---|
 | Empty production DB | First-run bootstrap is supported; full data moves via SQLite snapshots |
-| Hardcoded webhook token / wrong GitHub repo in `main.py` | Removed. `main.py` is only the local server. Deploy lives in `config.py` + `deploy/` + `app/deploy_routes.py`. Token is env-only |
-| CSRF | Session CSRF on **every** mutating endpoint (`app/hooks.py`); webhook is the only skip (HMAC / shared token) |
+| Hardcoded webhook token / wrong GitHub repo in `main.py` | Removed. `main.py` is only the local server. All old deploy wiring (`config.py`, `deploy/`, webhook routes) has been deleted and will be rebuilt from scratch |
+| CSRF | Session CSRF on **every** mutating endpoint (`app/hooks.py`); no webhook skip remains |
 | Duplicate auto bill numbers | `get_next_bill_no` takes the SQLite write lock first |
 | Future-dated money | Payments and reconciliation dates in the future are rejected |
 | Open Khata | `ensure_open_khata_client()` seeds a real master; receivables show and settle |
@@ -173,67 +170,16 @@ an already-applied file). See `app/migrations/README.md`.
 
 ## Deployment
 
-Everything about *where* code comes from and *where* it deploys is in
-**`config.py`**. After one-time setup:
-
-```text
-edit → git add → git commit → git push
-```
-
-Flow: GitHub push → `POST /git-auto-pull` → `deploy/deployer.py` inside the
-live app (protect `instance/` → git sync → restore `instance/` → pip if
-needed → import-validate → reload WSGI → `/health`).
-
-Secrets are environment-only: `AMS_WEBHOOK_TOKEN`, `PYTHONANYWHERE_API_TOKEN`.
-
-### One-time server setup
-
-1. GitHub → Settings → Secrets: `AMS_WEBHOOK_TOKEN` (long random string) and
-   `PYTHONANYWHERE_API_TOKEN` (from the PA account API page).
-2. Confirm `config.py` (or `AMS_*` env overrides) match the **actual** GitHub
-   repo and PythonAnywhere user/domain. Committed defaults still name the
-   older `rehmanahmedca-source/AMSCOPY9` checkout — override them for this
-   fork (`rizwanahmedsora9-pixel/AMS`) rather than editing blindly.
-3. On PythonAnywhere: clone, `mkvirtualenv --python=/usr/bin/python3.11 ams-venv`,
-   `pip install -r requirements.txt`, create a Manual Python 3.11 web app.
-4. WSGI file must set the token (a bash `export` does **not** reach the web app):
-
-   ```python
-   import os, sys
-   path = "/home/<pa-user>/<project>"
-   if path not in sys.path:
-       sys.path.insert(0, path)
-   os.environ["AMS_WEBHOOK_TOKEN"] = "PASTE_THE_SAME_LONG_RANDOM_TOKEN"
-   os.environ["VIRTUAL_ENV"] = "/home/<pa-user>/.virtualenvs/ams-venv"
-   from wsgi import app as application  # noqa
-   ```
-
-5. Reload. `https://<domain>/health` should return JSON with `"status": "healthy"`.
-6. Optional GitHub webhook: payload URL `https://<domain>/git-auto-pull`,
-   secret = the same `AMS_WEBHOOK_TOKEN`, push events only.
-
-There is **no** `.github/workflows/deploy.yml` in this checkout yet. Until it
-exists, trigger deploys with the GitHub webhook (or `POST /git-auto-pull` with
-the token). If the running code is older than the repo, 400/403 is normal —
-sync once by hand (`git fetch && git reset --hard origin/<branch>`), reload,
-then redeliver. `instance/*.db` is git-ignored.
-
-### Safety
-
-- Live data is snapshotted out of `instance/` before `git reset` and copied
-  back. A pre-deploy DB copy goes to `instance/backups/`.
-- Failed fetch / requirements / import → no reload; the working app stays up.
-- Code rollback: `python deploy/deploy.py --rollback` (or `--to-commit <sha>`).
-- Database rollback is manual: restore a file from `instance/backups/`.
-
-Local checks:
-
-```bash
-python config.py                 # control panel + validity
-python deploy/deploy.py --show
-python deploy/deploy.py --check  # also requires the webhook secret
-python deploy/deploy.py --health
-```
+> **Being rebuilt from scratch.** All previous deployment wiring (the old
+> `config.py` control center, the `deploy/` package, the `/git-auto-pull`
+> webhook and `/health` probe, the `wrangler.toml`) pointed at a different
+> GitHub repo (`rehmanahmedca-source/AMSCOPY9`) and a different
+> PythonAnywhere server, with unstable secrets — so it was deleted outright.
+> Nothing in this checkout deploys anywhere right now.
+>
+> The app itself is untouched: `wsgi.py` exposes `application` for any WSGI
+> host, and `instance/*.db` stays git-ignored. New deploy docs will land here
+> as the replacement pipeline is written.
 
 ---
 
@@ -256,23 +202,18 @@ backup first. See `tools/README.md`.
 
 These are the gaps that still match the **current** tree:
 
-1. **`config.py` defaults** still point at `AMSCOPY9` /
-   `rehmanahmedca-source`. This clone is `rizwanahmedsora9-pixel/AMS`. Set
-   `AMS_GITHUB_*` / `AMS_PA_*` on the server, or update the defaults when this
-   repo is the real deploy source.
-2. **GitHub Actions deploy workflow** is documented historically but not in
-   the tree. Add `.github/workflows/deploy.yml` if push-to-deploy should run
-   from Actions instead of only the webhook.
-3. **`User.password_plain`** still exists for legacy rows. Successful login
+1. **Deployment pipeline** is being rebuilt from scratch (old wiring
+   deleted; see "Deployment" above).
+2. **`User.password_plain`** still exists for legacy rows. Successful login
    upgrades to `password_hash` and clears plaintext. Rotate any account that
    has never logged in since the hash-only era.
-4. **`_WIPE_BACKUP_ENABLED` is `False`.** Granular wipe in Settings does not
-   auto-file a DB copy (the deploy path still does). Take a snapshot before
-   a wipe.
-5. **Sale POST idempotency** is tested, but unkeyed double-submit uniqueness
+3. **`_WIPE_BACKUP_ENABLED` is `False`.** Granular wipe in Settings does not
+   auto-file a DB copy (no auto-deploy path exists right now). Take a
+   snapshot before a wipe.
+4. **Sale POST idempotency** is tested, but unkeyed double-submit uniqueness
    is still a product choice (payload hash + key). Do not rely on the browser
    alone.
-6. **Scale:** list pages that embed every client in the combobox grow with
+5. **Scale:** list pages that embed every client in the combobox grow with
    client count; `/api/clients/search` exists for a lazy picker if payloads
    get large.
 
