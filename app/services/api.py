@@ -150,6 +150,8 @@ from app.services.grn_svc import (  # noqa: F401
     _is_grn_backdate_restricted_user,
     _sync_grn_auto_supplier_payment,
     calculate_grn_total,
+    parse_grn_datetime,
+    sync_grn_entry_timestamps,
 )
 from app.services.health import (  # noqa: F401
     _collect_health_counts,
@@ -461,6 +463,8 @@ __all__ = [
     '_is_grn_backdate_restricted_user',
     '_sync_grn_auto_supplier_payment',
     'calculate_grn_total',
+    'parse_grn_datetime',
+    'sync_grn_entry_timestamps',
     '_collect_health_counts',
     '_db_debug_counts',
     '_db_health_check_after_bootstrap',

@@ -90,35 +90,18 @@ def grn():
             due_date_str = request.form.get('due_date')
             bill_date_str = request.form.get('bill_date')
 
-            date_str = (request.form.get('date') or '').strip()
-            time_str = (request.form.get('time') or '').strip()
-            now_dt = pk_now()
-
-            if date_str:
-                if time_str:
-                    try:
-                        time_parts = time_str.split(':')
-                        if len(time_parts) == 2:
-                            date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
-                        else:
-                            date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M:%S')
-                    except ValueError:
-                        try:
-                            d = datetime.strptime(date_str, '%Y-%m-%d').date()
-                            date_posted = datetime.combine(d, now_dt.time())
-                        except ValueError:
-                            date_posted = now_dt
-                else:
-                    try:
-                        d = datetime.strptime(date_str, '%Y-%m-%d').date()
-                        if d == now_dt.date():
-                            date_posted = now_dt
-                        else:
-                            date_posted = datetime.combine(d, now_dt.time())
-                    except ValueError:
-                        date_posted = now_dt
-            else:
-                date_posted = now_dt
+            # Manual date / time override (step 1 of the wizard).  Adding and
+            # editing share the same parser so an entry typed by hand is saved
+            # exactly as typed; an unreadable value is refused with a message
+            # instead of silently stamping the GRN with the server clock.
+            try:
+                date_posted = parse_grn_datetime(
+                    request.form.get('date'),
+                    request.form.get('time'),
+                )
+            except ValueError as ve:
+                flash(str(ve), 'danger')
+                return redirect(url_for('grn'))
 
             restricted = _enforce_grn_backdate_policy(date_posted, 'Add GRN')
             if restricted:

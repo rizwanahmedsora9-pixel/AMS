@@ -198,6 +198,140 @@ def _sync_grn_auto_supplier_payment(grn, old_supplier_id=None):
     _sync_supplier_payment_accounting(row)
 
 
+# --- GRN manual date / time override --------------------------------------
+#
+# The GRN wizard lets the operator type any date and time ("override") so a
+# receipt can be stamped with the moment the goods were actually received
+# instead of the moment the record was entered.  Adding and editing both run
+# through the helpers below, so both accept exactly the same input:
+#
+#   * '' / None .......... server clock (PK timezone)
+#   * date only, today ... current server clock time
+#   * date only, other ... 00:00:00 (same rule as resolve_posted_datetime)
+#   * time only .......... server clock date + the typed time
+#   * 24-hour 'HH:MM' / 'HH:MM:SS' / 'H:MM'
+#   * 12-hour 'h:mm AM' / 'h:mm:ss PM' (case-insensitive)
+#   * 'YYYY-MM-DD' / 'YYYY/MM/DD' / 'DD/MM/YYYY' / 'DD-MM-YYYY'
+#   * a full 'YYYY-MM-DDTHH:MM[:SS]' value arriving in the date box
+#
+# Anything that cannot be understood raises ValueError with a readable
+# message so the route flashes it and refuses the save: a bookkeeping record
+# must never be silently stamped with a different time than the operator
+# typed (the old behaviour fell back to the server clock without a word).
+
+_GRN_DATE_FORMATS = ('%Y-%m-%d', '%Y/%m/%d', '%d/%m/%Y', '%d-%m-%Y')
+_GRN_TIME_FORMATS = (
+    '%H:%M',
+    '%H:%M:%S',
+    '%H:%M:%S.%f',
+    '%I:%M %p',
+    '%I:%M:%S %p',
+    '%I:%M%p',
+    '%I:%M:%S%p',
+)
+
+
+def _grn_split_date_time(raw):
+    """Split 'YYYY-MM-DDTHH:MM[:SS]' into ('YYYY-MM-DD', 'HH:MM:SS')."""
+    text = (raw or '').strip()
+    for sep in ('T', 't', ' '):
+        if sep in text:
+            head, _, tail = text.partition(sep)
+            return head.strip(), tail.strip()
+    return text, ''
+
+
+def _grn_parse_date(text, raw_for_error=None):
+    text = (text or '').strip()
+    if not text:
+        return None
+    for fmt in _GRN_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(
+        f"'{raw_for_error if raw_for_error is not None else text}' is not a valid date. "
+        "Use the date picker or type YYYY-MM-DD (example: 2026-10-08)."
+    )
+
+
+def _grn_parse_time(text, raw_for_error=None):
+    text = (text or '').strip().replace('\xa0', ' ')
+    text = ' '.join(text.split())
+    if not text:
+        return None
+    candidates = [text]
+    if '.' in text:
+        candidates.append(text.replace('.', ':', 1))
+    for candidate in candidates:
+        for fmt in _GRN_TIME_FORMATS:
+            try:
+                return datetime.strptime(candidate, fmt).time()
+            except ValueError:
+                continue
+    raise ValueError(
+        f"'{raw_for_error if raw_for_error is not None else text}' is not a valid time. "
+        "Use 24-hour HH:MM (e.g. 14:45) or 12-hour with AM/PM (e.g. 2:45 PM)."
+    )
+
+
+def parse_grn_datetime(date_raw, time_raw='', *, now=None):
+    """Resolve the manual GRN date/time override into a naive PK datetime.
+
+    Raises ValueError when the operator typed something unreadable; the
+    calling route flashes the message and saves nothing.
+    """
+    now_dt = now or pk_now()
+    date_text, embedded_time = _grn_split_date_time(date_raw)
+    time_text = (time_raw or '').strip()
+    if not time_text:
+        time_text = embedded_time
+
+    date_value = _grn_parse_date(date_text, raw_for_error=date_raw)
+    time_value = _grn_parse_time(time_text, raw_for_error=time_text)
+
+    if date_value is None and time_value is None:
+        return now_dt
+    if date_value is None:
+        date_value = now_dt.date()
+    if time_value is None:
+        # Date typed without a time: today keeps the current clock time,
+        # any other day starts at 00:00 (mirrors resolve_posted_datetime).
+        time_value = now_dt.time() if date_value == now_dt.date() else datetime.min.time()
+
+    return datetime.combine(date_value, time_value).replace(microsecond=0)
+
+
+def sync_grn_entry_timestamps(grn, when=None):
+    """Keep the GRN's stock-ledger Entry rows on the GRN's date/time.
+
+    Header-only edits (a GRN whose lots are locked by sales) change the GRN
+    stamp without rebuilding the lines, and the stock ledger used to keep the
+    old timestamp.  Only date/time are touched here, never quantities, so the
+    stock totals are unaffected.  Returns the number of rows updated.
+    """
+    if not grn or not getattr(grn, 'auto_bill_no', None):
+        return 0
+    stamp = when or getattr(grn, 'date_posted', None)
+    if not stamp:
+        return 0
+    date_str = stamp.strftime('%Y-%m-%d')
+    time_str = stamp.strftime('%H:%M:%S')
+    rows = Entry.query.filter(
+        Entry.auto_bill_no == grn.auto_bill_no,
+        Entry.type == 'IN',
+        Entry.is_void == False,  # noqa: E712 - SQLAlchemy column comparison
+    ).all()
+    updated = 0
+    for row in rows:
+        if row.date != date_str or row.time != time_str:
+            row.date = date_str
+            row.time = time_str
+            updated += 1
+    return updated
+
+
 def _is_grn_backdate_restricted_user():
     if not current_user.is_authenticated:
         return False

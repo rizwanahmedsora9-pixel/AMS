@@ -138,7 +138,7 @@
 
                                 <label class="form-label"><i class="bi bi-calendar3 me-1"></i>Date</label>
 
-                                <input type="date" class="form-control" name="date" id="grnDateInput" value="{{ edit_grn.date_posted.strftime('%Y-%m-%d') if edit_grn else today_date }}" required>
+                                <input type="date" class="form-control" name="date" id="grnDateInput" value="{{ edit_grn.date_posted.strftime('%Y-%m-%d') if edit_grn else today_date }}" title="Manual override: type or pick any date for this GRN" required>
 
                             </div>
 
@@ -146,7 +146,7 @@
 
                                 <label class="form-label"><i class="bi bi-clock me-1"></i>Time</label>
 
-                                <input type="time" class="form-control" name="time" id="grnTimeInput" value="{{ edit_grn.date_posted.strftime('%H:%M') if (edit_grn and edit_grn.date_posted) else (now_time or '') }}" required>
+                                <input type="time" step="1" class="form-control" name="time" id="grnTimeInput" value="{{ edit_grn.date_posted.strftime('%H:%M:%S' if edit_grn.date_posted.second else '%H:%M') if (edit_grn and edit_grn.date_posted) else (now_time or '') }}" title="Manual override: type or pick any time (24-hour, or 12-hour with AM/PM)" required>
 
                             </div>
 
@@ -164,6 +164,25 @@
 
                                 </select>
 
+                            </div>
+
+                            <!-- Manual date/time override helper: the two fields above stay
+                                 freely editable so a GRN can be stamped with the moment the
+                                 goods actually arrived, not the moment it was typed. -->
+                            <div class="col-12">
+                                <div class="d-flex flex-wrap align-items-center gap-2 small text-muted">
+                                    <span>
+                                        <i class="bi bi-pencil-square me-1"></i>
+                                        Date &amp; time are manual — type or pick any value to override the entry time
+                                        (24-hour, or 12-hour with AM/PM).
+                                    </span>
+                                    <span class="badge bg-secondary">System time: {{ today_date }} {{ now_time }}</span>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="grnUseNowBtn"
+                                            data-sys-date="{{ today_date }}" data-sys-time="{{ now_time or '' }}"
+                                            title="Reset the date and time to the system clock">
+                                        <i class="bi bi-clock-history me-1"></i>Use current time
+                                    </button>
+                                </div>
                             </div>
 
                         </div>
@@ -605,6 +624,23 @@
 <script>
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Manual date/time override: the Date and Time boxes are always
+    // editable (add and edit).  This button simply puts the system clock
+    // back into them when the operator wants the current moment instead of
+    // a hand-typed one.  The values come from the server (PK timezone), not
+    // from the browser clock.
+    const grnUseNowBtn = document.getElementById('grnUseNowBtn');
+    if (grnUseNowBtn) {
+        grnUseNowBtn.addEventListener('click', function() {
+            const dateInput = document.getElementById('grnDateInput');
+            const timeInput = document.getElementById('grnTimeInput');
+            const sysDate = this.getAttribute('data-sys-date') || '';
+            const sysTime = this.getAttribute('data-sys-time') || '';
+            if (dateInput && sysDate) { dateInput.value = sysDate; dateInput.classList.remove('is-invalid'); }
+            if (timeInput && sysTime) { timeInput.value = sysTime; timeInput.classList.remove('is-invalid'); }
+        });
+    }
+
     function formatNumber(value) {
         const num = Number(value || 0);
         return num.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 12});
