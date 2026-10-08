@@ -46,11 +46,9 @@
                         <button class="btn btn-outline-warning flex-grow-1" data-bs-toggle="modal" data-bs-target="#editSupplierModal{{ s.id }}">
                             <i class="bi bi-pencil"></i> Edit
                         </button>
-                        <form action="{{ url_for('delete_supplier', id=s.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete supplier?')">
-                            <button type="submit" class="btn btn-outline-danger">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </form>
+                        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteSupplierModal{{ s.id }}" title="Delete / Archive Supplier">
+                            <i class="bi bi-trash"></i>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -97,6 +95,54 @@
                     <button type="submit" class="btn btn-warning text-dark fw-bold">Update</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Delete / Archive Supplier Modal -->
+    <div class="modal fade" id="deleteSupplierModal{{ s.id }}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark text-white border-danger shadow-lg">
+                <div class="modal-header border-danger">
+                    <h5 class="modal-title text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Delete / Suspend: {{ s.name }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-white-50 small mb-3">Choose whether you want to temporarily suspend this supplier or permanently delete them along with their wrong entries to restart fresh.</p>
+
+                    <!-- Option 1: Suspend / Archive -->
+                    <div class="card bg-secondary bg-opacity-25 border-secondary p-3 mb-3">
+                        <h6 class="text-warning fw-bold mb-1"><i class="bi bi-archive me-1"></i> Option 1: Suspend / Archive (Safe)</h6>
+                        <p class="text-white-50 x-small mb-2">Marks the supplier as inactive. All historical GRNs, payments, and ledger balances are preserved.</p>
+                        <form action="{{ url_for('delete_supplier', id=s.id) }}" method="POST">
+                            <input type="hidden" name="action" value="archive">
+                            <button type="submit" class="btn btn-outline-warning btn-sm fw-bold">
+                                <i class="bi bi-pause-circle me-1"></i> Suspend Supplier
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Option 2: Hard Delete & Wipe -->
+                    <div class="card bg-danger bg-opacity-10 border-danger p-3">
+                        <h6 class="text-danger fw-bold mb-1"><i class="bi bi-trash3-fill me-1"></i> Option 2: Hard Delete (Start Fresh)</h6>
+                        <p class="text-white-50 x-small mb-2">Permanently deletes this supplier and completely purges all associated wrong entries (GRNs, payments, and stock additions) so you can enter this supplier's data again from start.</p>
+                        <form action="{{ url_for('hard_delete_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('PERMANENT DELETION WARNING:\n\nAre you sure you want to permanently delete supplier \'{{ s.name }}\' and wipe all their entries?\n\nThis will reverse all payments and GRNs for this supplier so you can start fresh. This cannot be undone.');">
+                            <input type="hidden" name="action" value="hard_delete">
+                            <div class="form-check small mb-2">
+                                <input class="form-check-input" type="checkbox" id="confirmHardDelete{{ s.id }}" required>
+                                <label class="form-check-label text-white-50" for="confirmHardDelete{{ s.id }}">
+                                    I confirm I want to permanently delete this supplier and start fresh.
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-danger btn-sm fw-bold">
+                                <i class="bi bi-trash me-1"></i> Permanently Delete &amp; Wipe Entries
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                </div>
+            </div>
         </div>
     </div>
     {% endfor %}

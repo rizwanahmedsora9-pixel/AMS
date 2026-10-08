@@ -684,6 +684,158 @@ def hard_delete_transaction(kind, obj_id):
     return deleted
 
 
+def hard_delete_supplier(supplier_id_or_obj, *, actor=None):
+    """Permanently delete a supplier and purge all associated entries.
+
+    Reverses financial accounting effects, clears inventory additions from GRNs,
+    removes linked SupplierPayment and GRN records, unlinks accounts, and deletes
+    the supplier master record so the user can start fresh without historical residue.
+
+    If any GRN items from this supplier are locked/consumed by sales, raises ValueError
+    to prevent corrupting downstream client sales.
+    """
+    if isinstance(supplier_id_or_obj, Supplier):
+        supplier = supplier_id_or_obj
+    else:
+        supplier = db.session.get(Supplier, int(supplier_id_or_obj))
+
+    if not supplier:
+        raise ValueError("Supplier not found.")
+
+    supplier_pk = supplier.id
+    supplier_name = supplier.name
+
+    # 1. Check all GRNs for this supplier
+    grns = GRN.query.filter(
+        or_(
+            GRN.supplier_id == supplier_pk,
+            and_(
+                GRN.supplier_id.is_(None),
+                func.lower(func.trim(GRN.supplier)) == supplier_name.strip().lower()
+            )
+        )
+    ).all()
+
+    locked_grns = []
+    for g in grns:
+        if _grn_has_locked_lots(g):
+            ref = g.manual_bill_no or g.auto_bill_no or f"GRN #{g.id}"
+            locked_grns.append(ref)
+
+    if locked_grns:
+        raise ValueError(
+            f"Cannot hard delete supplier '{supplier_name}': stock from "
+            f"{', '.join(locked_grns)} has already been consumed/sold in Direct Sales. "
+            "Please delete or reverse those customer sales first."
+        )
+
+    # 2. Reverse and remove GRN records
+    for g in grns:
+        # Reverses material stock additions and voids auto supplier payment
+        _set_grn_void_state(g, True)
+
+        # Remove inventory IN entry records
+        Entry.query.filter(
+            Entry.auto_bill_no == g.auto_bill_no,
+            Entry.type == 'IN'
+        ).delete(synchronize_session=False)
+
+        # Remove allocations and line items
+        grn_item_ids = [r[0] for r in db.session.query(GRNItem.id).filter(GRNItem.grn_id == g.id).all()]
+        if grn_item_ids:
+            GRNAllocation.query.filter(GRNAllocation.grn_item_id.in_(grn_item_ids)).delete(synchronize_session=False)
+            GRNItem.query.filter(GRNItem.id.in_(grn_item_ids)).delete(synchronize_session=False)
+
+        db.session.delete(g)
+
+    # Also clean up any legacy Entry records for this supplier name
+    Entry.query.filter(
+        func.lower(func.trim(Entry.client)) == supplier_name.strip().lower(),
+        Entry.type == 'IN'
+    ).delete(synchronize_session=False)
+
+    # 3. Clean up all SupplierPayment records for this supplier (standalone and auto)
+    payments = SupplierPayment.query.filter(
+        or_(
+            SupplierPayment.supplier_id == supplier_pk,
+            func.lower(func.coalesce(SupplierPayment.account_name, '')).like(f"%{supplier_name.lower()}%")
+        )
+    ).all()
+
+    for pay in payments:
+        pay_id = pay.id
+        if not pay.is_void:
+            pay.is_void = True
+            _sync_supplier_payment_accounting(pay)
+
+        marker = f'[SRC:SupplierPayment:{pay_id}]'
+        txs = AccountTransaction.query.filter(
+            or_(
+                AccountTransaction.note.ilike(f'%{marker}%'),
+                and_(
+                    AccountTransaction.source_type == 'SupplierPayment',
+                    AccountTransaction.source_id == pay_id
+                )
+            )
+        ).all()
+        for tx in txs:
+            if not tx.is_void:
+                _reverse_account_tx_effect(tx)
+            db.session.delete(tx)
+
+        db.session.delete(pay)
+
+    # 4. Unlink any financial Accounts
+    Account.query.filter_by(linked_supplier_id=supplier_pk).update({
+        'linked_supplier_id': None,
+        'linked_party_name': None,
+    }, synchronize_session=False)
+
+    # 5. Snapshot before deletion
+    before = {
+        'id': supplier_pk,
+        'name': supplier_name,
+        'phone': supplier.phone,
+        'opening_balance': supplier.opening_balance,
+        'grns_deleted': len(grns),
+        'payments_deleted': len(payments),
+    }
+
+    # 6. Delete supplier master row
+    db.session.delete(supplier)
+    db.session.flush()
+
+    # 7. Recompute material inventory totals
+    _rebuild_material_totals()
+
+    # 8. Record audit trail
+    from utils.accounting_audit import record_accounting_audit
+    act = actor if actor is not None else current_user
+    audit_log(
+        act,
+        'supplier.hard_delete',
+        f"Hard deleted supplier '{supplier_name}' (#{supplier_pk}) with {len(grns)} GRN(s) and {len(payments)} payment(s)."
+    )
+    record_accounting_audit(
+        act,
+        action='HardDelete',
+        entity_type='Supplier',
+        entity_id=supplier_pk,
+        before=before,
+        after=None,
+        party_before_id=supplier_pk,
+        reason='Supplier and associated entries permanently removed to reset data.',
+        module='suppliers'
+    )
+
+    return {
+        'supplier_id': supplier_pk,
+        'supplier_name': supplier_name,
+        'grns_deleted': len(grns),
+        'payments_deleted': len(payments),
+    }
+
+
 def _set_payment_void_state(payment, is_void):
     if not payment:
         return False
