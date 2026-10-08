@@ -90,16 +90,35 @@ def grn():
             due_date_str = request.form.get('due_date')
             bill_date_str = request.form.get('bill_date')
 
-            date_str = request.form.get('date')
+            date_str = (request.form.get('date') or '').strip()
+            time_str = (request.form.get('time') or '').strip()
+            now_dt = pk_now()
+
             if date_str:
-                try:
-                    date_posted = datetime.strptime(date_str, '%Y-%m-%d')
-                    if date_posted.date() == pk_today():
-                        date_posted = pk_now()
-                except ValueError:
-                    date_posted = pk_now()
+                if time_str:
+                    try:
+                        time_parts = time_str.split(':')
+                        if len(time_parts) == 2:
+                            date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
+                        else:
+                            date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        try:
+                            d = datetime.strptime(date_str, '%Y-%m-%d').date()
+                            date_posted = datetime.combine(d, now_dt.time())
+                        except ValueError:
+                            date_posted = now_dt
+                else:
+                    try:
+                        d = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        if d == now_dt.date():
+                            date_posted = now_dt
+                        else:
+                            date_posted = datetime.combine(d, now_dt.time())
+                    except ValueError:
+                        date_posted = now_dt
             else:
-                date_posted = pk_now()
+                date_posted = now_dt
 
             restricted = _enforce_grn_backdate_policy(date_posted, 'Add GRN')
             if restricted:
@@ -293,9 +312,16 @@ def grn():
         query = query.filter(func.date(GRN.date_posted) <= end_date)
     
     if sort_by == 'supplier':
-        grns = query.options(selectinload(GRN.items)).order_by(GRN.supplier.asc()).all()
+        grns = query.options(selectinload(GRN.items)).order_by(
+            GRN.supplier.asc(),
+            GRN.date_posted.desc(),
+            GRN.id.desc()
+        ).all()
     else:
-        grns = query.options(selectinload(GRN.items)).order_by(GRN.date_posted.desc()).all()
+        grns = query.options(selectinload(GRN.items)).order_by(
+            GRN.date_posted.desc(),
+            GRN.id.desc()
+        ).all()
 
     materials = Material.query.filter_by(is_active=True).order_by(Material.name.asc()).all()
     clients = Client.query.filter_by(is_active=True).order_by(Client.name.asc()).all()
@@ -308,6 +334,21 @@ def grn():
         func.coalesce(Account.is_active, True) == True
     ).order_by(Account.category.asc(), Account.name.asc()).all()
 
-    return render_template('grn_wizard.html', grns=grns, materials=materials, settings=settings, next_auto=next_auto, clients=clients, suppliers=suppliers_list, accounts=accounts, today_date=pk_today().strftime('%Y-%m-%d'), search=search, sort=sort_by, start_date=start_date, end_date=end_date)
+    return render_template(
+        'grn_wizard.html',
+        grns=grns,
+        materials=materials,
+        settings=settings,
+        next_auto=next_auto,
+        clients=clients,
+        suppliers=suppliers_list,
+        accounts=accounts,
+        today_date=pk_today().strftime('%Y-%m-%d'),
+        now_time=pk_now().strftime('%H:%M'),
+        search=search,
+        sort=sort_by,
+        start_date=start_date,
+        end_date=end_date
+    )
 
 

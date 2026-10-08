@@ -108,15 +108,23 @@
 
                             </div>
 
-                            <div class="col-md-4">
+                            <div class="col-md-3 col-sm-6">
 
-                                <label class="form-label">Date</label>
+                                <label class="form-label"><i class="bi bi-calendar3 me-1"></i>Date</label>
 
-                                <input type="date" class="form-control" name="date" value="{{ edit_grn.date_posted.strftime('%Y-%m-%d') if edit_grn else today_date }}" required>
+                                <input type="date" class="form-control" name="date" id="grnDateInput" value="{{ edit_grn.date_posted.strftime('%Y-%m-%d') if edit_grn else today_date }}" required>
 
                             </div>
 
-                            <div class="col-md-4">
+                            <div class="col-md-2 col-sm-6">
+
+                                <label class="form-label"><i class="bi bi-clock me-1"></i>Time</label>
+
+                                <input type="time" class="form-control" name="time" id="grnTimeInput" value="{{ edit_grn.date_posted.strftime('%H:%M') if (edit_grn and edit_grn.date_posted) else (now_time or '') }}" required>
+
+                            </div>
+
+                            <div class="col-md-3">
 
                                 <label class="form-label">Payment Type</label>
 
@@ -445,7 +453,7 @@
 
                             <th>GRN #</th>
 
-                            <th><a href="{{ url_for('grn', sort='date', search=search, start_date=start_date, end_date=end_date) }}" class="text-decoration-none {{ 'text-warning' if sort == 'date' else 'text-dark' }}">Date <i class="bi bi-arrow-down-up small"></i></a></th>
+                            <th><a href="{{ url_for('grn', sort='date', search=search, start_date=start_date, end_date=end_date) }}" class="text-decoration-none {{ 'text-warning' if sort == 'date' else 'text-dark' }}">Date &amp; Time <i class="bi bi-arrow-down-up small"></i></a></th>
 
                             <th><a href="{{ url_for('grn', sort='supplier', search=search, start_date=start_date, end_date=end_date) }}" class="text-decoration-none {{ 'text-warning' if sort == 'supplier' else 'text-dark' }}">Supplier <i class="bi bi-arrow-down-up small"></i></a></th>
 
@@ -471,7 +479,14 @@
                                 {% if grn.auto_bill_no %}<span class="badge bg-info text-dark me-1">{{ grn.auto_bill_no }}</span>{% endif %}
                                 {% if grn.manual_bill_no %}<span class="badge bg-warning text-dark">{{ grn.manual_bill_no }}</span>{% endif %}
                             </td>
-                            <td>{{ grn.date_posted.strftime('%d/%b/%Y') if grn.date_posted else '' }}</td>
+                            <td>
+                                {% if grn.date_posted %}
+                                    <div class="fw-bold">{{ grn.date_posted.strftime('%d/%b/%Y') }}</div>
+                                    <div class="small text-muted"><i class="bi bi-clock me-1"></i>{{ grn.date_posted.strftime('%I:%M %p') }}</div>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
 
                             <td>{{ grn.supplier }}</td>
 

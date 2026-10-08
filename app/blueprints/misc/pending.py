@@ -390,19 +390,37 @@ def edit_grn(id):
                 flash(f"Manual bill '{grn_obj.manual_bill_no}' already exists in {conflict[0]} #{conflict[1]}.", 'danger')
                 return redirect(url_for('edit_grn', id=grn_obj.id))
 
-        date_str = request.form.get('date')
+        date_str = (request.form.get('date') or '').strip()
+        time_str = (request.form.get('time') or '').strip()
+        now_dt = pk_now()
         if date_str:
-            try:
-                date_posted = datetime.strptime(date_str, '%Y-%m-%d')
-                restricted = _enforce_grn_backdate_policy(date_posted, 'Edit GRN')
-                if restricted:
-                    return restricted
-                if date_posted.date() == pk_today():
-                    grn_obj.date_posted = pk_now()
-                else:
-                    grn_obj.date_posted = date_posted
-            except ValueError:
-                pass
+            if time_str:
+                try:
+                    time_parts = time_str.split(':')
+                    if len(time_parts) == 2:
+                        date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
+                    else:
+                        date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    try:
+                        d = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        date_posted = datetime.combine(d, now_dt.time())
+                    except ValueError:
+                        date_posted = now_dt
+            else:
+                try:
+                    d = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    if d == now_dt.date():
+                        date_posted = now_dt
+                    else:
+                        date_posted = datetime.combine(d, now_dt.time())
+                except ValueError:
+                    date_posted = now_dt
+
+            restricted = _enforce_grn_backdate_policy(date_posted, 'Edit GRN')
+            if restricted:
+                return restricted
+            grn_obj.date_posted = date_posted
 
         # Bill Date / Due Date are real form fields on the wizard — save them.
         # (Previously they were read on ADD but silently ignored on EDIT.)
@@ -505,7 +523,10 @@ def edit_grn(id):
         flash('GRN updated successfully', 'success')
         return redirect(url_for('grn'))
 
-    grns = GRN.query.options(selectinload(GRN.items)).order_by(GRN.date_posted.desc()).all()
+    grns = GRN.query.options(selectinload(GRN.items)).order_by(
+        GRN.date_posted.desc(),
+        GRN.id.desc()
+    ).all()
     materials = Material.query.order_by(Material.name.asc()).all()
     clients = Client.query.filter_by(is_active=True).order_by(Client.name.asc()).all()
     suppliers_list = Supplier.query.filter_by(is_active=True).order_by(Supplier.name.asc()).all()
@@ -515,7 +536,22 @@ def edit_grn(id):
         func.coalesce(Account.is_active, True) == True
     ).order_by(Account.category.asc(), Account.name.asc()).all()
 
-    return render_template('grn_wizard.html', grns=grns, materials=materials, settings=settings, clients=clients, suppliers=suppliers_list, accounts=accounts, today_date=pk_today().strftime('%Y-%m-%d'), edit_grn=grn_obj, search='', sort='date', start_date=None, end_date=None)
+    return render_template(
+        'grn_wizard.html',
+        grns=grns,
+        materials=materials,
+        settings=settings,
+        clients=clients,
+        suppliers=suppliers_list,
+        accounts=accounts,
+        today_date=pk_today().strftime('%Y-%m-%d'),
+        now_time=pk_now().strftime('%H:%M'),
+        edit_grn=grn_obj,
+        search='',
+        sort='date',
+        start_date=None,
+        end_date=None
+    )
 
 
 @bp.route('/export_grn')
@@ -540,7 +576,10 @@ def export_grn():
     if end_date:
         query = query.filter(func.date(GRN.date_posted) <= end_date)
     
-    grns = query.order_by(GRN.date_posted.desc()).all()
+    grns = query.order_by(
+        GRN.date_posted.desc(),
+        GRN.id.desc()
+    ).all()
     
     data = []
     for g in grns:
