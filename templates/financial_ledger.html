@@ -7,6 +7,32 @@
   .ledger-number { font-variant-numeric: tabular-nums; }
   .ledger-card { background: #1e293b; border: 1px solid #475569; border-radius: 14px; }
   @media (max-width: 767px) { .ledger-table { min-width: 1080px; } }
+
+  .entry-highlighted {
+    background-color: rgba(234, 179, 8, 0.22) !important;
+    box-shadow: inset 4px 0 0 #eab308 !important;
+  }
+  .entry-highlighted > td {
+    background-color: transparent !important;
+  }
+  .row-star-btn {
+    cursor: pointer;
+    font-size: 1.15rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, color 0.15s ease;
+    user-select: none;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.35);
+  }
+  .row-star-btn:hover {
+    transform: scale(1.25);
+    color: #facc15 !important;
+  }
+  .row-star-btn.starred {
+    color: #eab308 !important;
+  }
 </style>
 
 {% set is_client = entity_type == 'client' %}
@@ -92,10 +118,15 @@
   <div class="card-header bg-transparent border-secondary d-flex justify-content-between align-items-center"><h5 class="mb-0 text-success"><i class="bi bi-journal-text me-2"></i>Financial transaction ledger</h5><span class="badge bg-success">{{ total }} movements</span></div>
   <div class="table-responsive">
     <table class="table table-dark table-hover align-middle mb-0 ledger-table">
-      <thead class="bg-slate-900"><tr><th class="ps-4">Date</th><th>Type</th><th>Reference</th><th class="description">Description</th><th>Account</th><th>Notes</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Running balance</th><th class="text-end pe-4">Actions</th></tr></thead>
+      <thead class="bg-slate-900"><tr><th class="text-center" style="width: 42px;"><i class="bi bi-star text-warning" title="Click star to highlight line"></i></th><th class="ps-4">Date</th><th>Type</th><th>Reference</th><th class="description">Description</th><th>Account</th><th>Notes</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Running balance</th><th class="text-end pe-4">Actions</th></tr></thead>
       <tbody>
       {% for row in rows %}
         <tr>
+          <td class="text-center" style="width: 42px;">
+            <span class="row-star-btn" data-row-id="{{ row.source_type ~ '-' ~ (row.source_id or loop.index) ~ '-' ~ (row.date.strftime('%Y%m%d%H%M%S') if row.date else '') }}" title="Highlight entry">
+              <i class="bi bi-star"></i>
+            </span>
+          </td>
           <td class="ps-4 text-white-50">{{ row.date.strftime('%Y-%m-%d %H:%M') if row.date and row.date.year > 1 else '—' }}</td>
           <td><span class="badge bg-dark border border-secondary">{{ row.type }}</span></td>
           <td class="text-warning fw-bold">{% if is_supplier and row.source_type == 'SupplierPayment' and row.source_id %}<a class="text-warning text-decoration-none" href="{{ url_for('download_supplier_payment', payment_id=row.source_id, action='print') }}" title="View this supplier payment">{{ row.reference }}</a>{% elif is_supplier and row.source_type == 'GRN' and row.source_id %}<a class="text-warning text-decoration-none" href="{{ url_for('view_bill', bill_no=row.reference, src='grn', src_id=row.source_id) }}" title="View this GRN">{{ row.reference }}</a>{% elif row.reference and row.type not in ['OPENING', 'Carry Forward'] %}<a class="text-warning text-decoration-none" href="{{ url_for('view_bill', bill_no=row.reference) }}">{{ row.reference }}</a>{% elif row.reference %}{{ row.reference }}{% else %}—{% endif %}</td>
@@ -136,7 +167,7 @@
             {% else %}<span class="text-white-50">—</span>{% endif %}
           </td>
         </tr>
-      {% else %}<tr><td colspan="10" class="text-center py-5 text-white-50">No ledger movements match these filters.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="11" class="text-center py-5 text-white-50">No ledger movements match these filters.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
@@ -309,4 +340,63 @@ document.querySelectorAll('[data-driver-pay-form], [data-driver-edit-form]').for
 {% if opening_url %}
 <div class="modal fade" id="openingBalanceModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog"><form class="modal-content border-secondary" style="background:#1e293b" method="POST" action="{{ opening_url }}"><div class="modal-header border-0"><h5 class="text-warning">Set opening balance</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body"><label class="text-white-50 small">Opening balance</label><input type="number" step="0.01" name="opening_balance" value="{{ '%.2f'|format(entity.opening_balance or 0) }}" class="form-control bg-dark text-white border-secondary" required><small class="text-white-50">Positive is owed by the counter-party; negative is an advance.</small><label class="text-white-50 small mt-3">Opening date</label><input type="date" name="opening_balance_date" value="{{ entity.opening_balance_date.strftime('%Y-%m-%d') if entity.opening_balance_date else '' }}" class="form-control bg-dark text-white border-secondary" required></div><div class="modal-footer border-0"><button class="btn btn-warning text-dark fw-bold w-100">Save opening balance</button></div></form></div></div>
 {% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const storageKey = 'ams_starred_ledger_{{ entity_type }}_{{ entity.id }}';
+  let starred = new Set();
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored) {
+      starred = new Set(JSON.parse(stored));
+    }
+  } catch (e) {}
+
+  function syncStarUi(btn, isStarred) {
+    const tr = btn.closest('tr');
+    const icon = btn.querySelector('i');
+    if (isStarred) {
+      btn.classList.add('starred');
+      if (icon) {
+        icon.className = 'bi bi-star-fill text-warning';
+      }
+      if (tr) {
+        tr.classList.add('entry-highlighted');
+      }
+    } else {
+      btn.classList.remove('starred');
+      if (icon) {
+        icon.className = 'bi bi-star';
+      }
+      if (tr) {
+        tr.classList.remove('entry-highlighted');
+      }
+    }
+  }
+
+  document.querySelectorAll('.ledger-table .row-star-btn').forEach(btn => {
+    const id = btn.getAttribute('data-row-id');
+    if (id && starred.has(id)) {
+      syncStarUi(btn, true);
+    }
+
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const rowId = this.getAttribute('data-row-id');
+      const nowStarred = !this.classList.contains('starred');
+      syncStarUi(this, nowStarred);
+      if (rowId) {
+        if (nowStarred) {
+          starred.add(rowId);
+        } else {
+          starred.delete(rowId);
+        }
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(Array.from(starred)));
+        } catch (e) {}
+      }
+    });
+  });
+});
+</script>
 {% endblock %}

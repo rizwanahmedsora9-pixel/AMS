@@ -34,6 +34,31 @@
         text-overflow: ellipsis;
         display: block;
     }
+    .entry-highlighted {
+        background-color: rgba(234, 179, 8, 0.22) !important;
+        box-shadow: inset 4px 0 0 #eab308 !important;
+    }
+    .entry-highlighted > td {
+        background-color: transparent !important;
+    }
+    .row-star-btn {
+        cursor: pointer;
+        font-size: 1.15rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.15s ease, color 0.15s ease;
+        user-select: none;
+        line-height: 1;
+        color: rgba(255, 255, 255, 0.35);
+    }
+    .row-star-btn:hover {
+        transform: scale(1.25);
+        color: #facc15 !important;
+    }
+    .row-star-btn.starred {
+        color: #eab308 !important;
+    }
     /* Tablet / small desktop: fixed columns scroll instead of crushing together. */
     @media (min-width: 768px) and (max-width: 1199.98px) {
         .supplier-ledger-table {
@@ -163,6 +188,7 @@
                 <table class="table table-dark table-hover align-middle mb-0 supplier-ledger-table table-stack-cards">
                     <thead style="background: #0f172a;">
                         <tr>
+                            <th class="text-center py-3 text-white-50" style="width: 42px;"><i class="bi bi-star text-warning" title="Click star to highlight line"></i></th>
                             <th class="ps-4 py-3 text-white-50">Date</th>
                             <th class="py-3 text-white-50">Material</th>
                             <th class="py-3 text-white-50">Bill #</th>
@@ -177,6 +203,11 @@
                     <tbody>
                         {% for row in ledger %}
                 <tr style="border-bottom: 1px solid #334155;">
+                    <td class="text-center" style="width: 42px;">
+                        <span class="row-star-btn" data-row-id="{{ row.type ~ '-' ~ (row.id or loop.index) ~ '-' ~ (row.bill_no or '') }}" title="Highlight entry">
+                            <i class="bi bi-star"></i>
+                        </span>
+                    </td>
                     <td class="ps-4" data-label="Date">{{ row.date.strftime('%Y-%m-%d') }}</td>
                     <td data-label="Material">
                         {% if row.type == 'GRN' and row.item_lines %}
@@ -289,7 +320,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="9" class="text-center py-5 text-white-50">No transactions found.</td></tr>
+                <tr><td colspan="10" class="text-center py-5 text-white-50">No transactions found.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -403,6 +434,61 @@ document.addEventListener('DOMContentLoaded', function() {
             if (bankName) bankName.value = opt.dataset.bank || '';
             if (accName) accName.value = opt.dataset.holder || '';
             if (accNo) accNo.value = opt.dataset.no || '';
+        });
+    });
+
+    const storageKey = 'ams_starred_supplier_ledger_{{ supplier.id }}';
+    let starred = new Set();
+    try {
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+            starred = new Set(JSON.parse(stored));
+        }
+    } catch (e) {}
+
+    function syncStarUi(btn, isStarred) {
+        const tr = btn.closest('tr');
+        const icon = btn.querySelector('i');
+        if (isStarred) {
+            btn.classList.add('starred');
+            if (icon) {
+                icon.className = 'bi bi-star-fill text-warning';
+            }
+            if (tr) {
+                tr.classList.add('entry-highlighted');
+            }
+        } else {
+            btn.classList.remove('starred');
+            if (icon) {
+                icon.className = 'bi bi-star';
+            }
+            if (tr) {
+                tr.classList.remove('entry-highlighted');
+            }
+        }
+    }
+
+    document.querySelectorAll('.supplier-ledger-table .row-star-btn').forEach(btn => {
+        const id = btn.getAttribute('data-row-id');
+        if (id && starred.has(id)) {
+            syncStarUi(btn, true);
+        }
+
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const rowId = this.getAttribute('data-row-id');
+            const nowStarred = !this.classList.contains('starred');
+            syncStarUi(this, nowStarred);
+            if (rowId) {
+                if (nowStarred) {
+                    starred.add(rowId);
+                } else {
+                    starred.delete(rowId);
+                }
+                try {
+                    localStorage.setItem(storageKey, JSON.stringify(Array.from(starred)));
+                } catch (e) {}
+            }
         });
     });
 });
