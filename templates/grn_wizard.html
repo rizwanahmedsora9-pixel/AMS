@@ -107,7 +107,7 @@
 
                                 <div class="input-group position-relative">
 
-                                    <input type="text" class="form-control" name="supplier" id="supplierInput" required placeholder="Select or Type Supplier" value="{{ edit_grn.supplier if edit_grn else '' }}" autocomplete="off" onfocus="showCombobox('supplierInput', 'supplierCombobox')" oninput="document.getElementById('supplier_id').value=''; filterCombobox('supplierInput', 'supplierCombobox')">
+                                    <input type="text" class="form-control" name="supplier" id="supplierInput" required placeholder="Select or Type Supplier" value="{{ (edit_grn.supplier or '') if edit_grn else '' }}" autocomplete="off" onfocus="showCombobox('supplierInput', 'supplierCombobox')" oninput="document.getElementById('supplier_id').value=''; filterCombobox('supplierInput', 'supplierCombobox')">
 
                                     <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#addSupplierModal" title="Add New Supplier">
                                         <i class="bi bi-plus-lg"></i>
@@ -211,15 +211,15 @@
                         <div id="bankDetailsSection" class="row g-3 mt-2" style="display: {{ 'flex' if edit_grn and edit_grn.payment_type == 'Bank Transfer' else 'none' }};">
                             <div class="col-md-4">
                                 <label class="form-label">Bank Name</label>
-                                <input type="text" class="form-control" id="bankNameInput" name="bank_name" value="{{ edit_grn.bank_name if edit_grn else '' }}" placeholder="e.g. HBL">
+                                <input type="text" class="form-control" id="bankNameInput" name="bank_name" value="{{ (edit_grn.bank_name or '') if edit_grn else '' }}" placeholder="e.g. HBL">
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Account Holder Name</label>
-                                <input type="text" class="form-control" id="bankAccountHolderInput" name="account_name" value="{{ edit_grn.account_name if edit_grn else '' }}" placeholder="e.g. John Doe">
+                                <input type="text" class="form-control" id="bankAccountHolderInput" name="account_name" value="{{ (edit_grn.account_name or '') if edit_grn else '' }}" placeholder="e.g. John Doe">
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Account Number</label>
-                                <input type="text" class="form-control" id="bankAccountNoInput" name="account_no" value="{{ edit_grn.account_no if edit_grn else '' }}" placeholder="e.g. 1234-5678">
+                                <input type="text" class="form-control" id="bankAccountNoInput" name="account_no" value="{{ (edit_grn.account_no or '') if edit_grn else '' }}" placeholder="e.g. 1234-5678">
                             </div>
                         </div>
 
@@ -417,16 +417,16 @@
 
                                 <div class="row g-3">
 
-                                    <div class="col-md-3"><label>Supp Invoice No.</label><input type="text" class="form-control" name="supplier_invoice_no" value="{{ edit_grn.supplier_invoice_no if edit_grn else '' }}"></div>
-                                    <div class="col-md-3"><label>Bill No.</label><input type="text" class="form-control" name="manual_bill_no" placeholder="Internal Bill #" value="{{ edit_grn.manual_bill_no if edit_grn else '' }}"></div>
-                                    <div class="col-md-3"><label>Bill Date</label><input type="date" class="form-control" name="bill_date" value="{{ edit_grn.bill_date if edit_grn else '' }}"></div>
-                                    <div class="col-md-3"><label>Due Date</label><input type="date" class="form-control" name="due_date" value="{{ edit_grn.due_date if edit_grn else '' }}"></div>
+                                    <div class="col-md-3"><label>Supp Invoice No.</label><input type="text" class="form-control" name="supplier_invoice_no" value="{{ (edit_grn.supplier_invoice_no or '') if edit_grn else '' }}"></div>
+                                    <div class="col-md-3"><label>Bill No.</label><input type="text" class="form-control" name="manual_bill_no" placeholder="Internal Bill #" value="{{ (edit_grn.manual_bill_no or '') if edit_grn else '' }}"></div>
+                                    <div class="col-md-3"><label>Bill Date</label><input type="date" class="form-control" name="bill_date" value="{{ edit_grn.bill_date.strftime('%Y-%m-%d') if (edit_grn and edit_grn.bill_date) else '' }}"></div>
+                                    <div class="col-md-3"><label>Due Date</label><input type="date" class="form-control" name="due_date" value="{{ edit_grn.due_date.strftime('%Y-%m-%d') if (edit_grn and edit_grn.due_date) else '' }}"></div>
                                     <div class="col-md-3"><label class="text-success fw-bold">Paid Amount</label><input type="number" class="form-control border-success" name="paid_amount" step="any" inputmode="decimal" value="{{ edit_grn.paid_amount if edit_grn else '' }}" placeholder="Partial/Full Payment"></div>
                                 </div>
                             </div>
                             <div class="tab-pane fade" id="comments">
 
-                                <div class="mb-3"><label>Comments</label><textarea class="form-control" name="note" rows="3">{{ edit_grn.note if edit_grn else '' }}</textarea></div>
+                                <div class="mb-3"><label>Comments</label><textarea class="form-control" name="note" rows="3">{{ (edit_grn.note or '') if edit_grn else '' }}</textarea></div>
 
                                 <div class="mb-3"><label>Photo</label><input type="file" class="form-control" name="photo"></div>
 
