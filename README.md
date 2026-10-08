@@ -123,6 +123,7 @@ Do **not** re-open these as if they were still broken:
 | Future-dated money | Payments and reconciliation dates in the future are rejected |
 | Open Khata | `ensure_open_khata_client()` seeds a real master; receivables show and settle |
 | Domain wipe FK order | Sale lines unlink `grn_item_id` before GRN lots are deleted |
+| GRN date/time override | Adding **and** editing a GRN accept a hand-typed date and time (24-hour `14:45`, 12-hour `2:45 PM`, optional seconds). The stock-ledger rows follow the GRN stamp, and unreadable input is refused with a message instead of silently using the server clock |
 | Sale forms | Add/edit fields match the backend; missing-field scare was not confirmed |
 | Import FK / blank bill uniqueness | Parent-first insert; unique auto-bill indexes ignore blanks |
 | Data transport | Full moves use `.amsdb` SQLite snapshots (`full_db_sync/`), not Excel |

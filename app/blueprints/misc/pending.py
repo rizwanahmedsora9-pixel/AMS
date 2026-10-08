@@ -1,5 +1,6 @@
 """pending — split from misc.py."""
 from ._common import *  # noqa
+from sqlalchemy.exc import IntegrityError
 
 @bp.route('/add_pending_bill', methods=['POST'])
 @login_required
@@ -390,37 +391,31 @@ def edit_grn(id):
                 flash(f"Manual bill '{grn_obj.manual_bill_no}' already exists in {conflict[0]} #{conflict[1]}.", 'danger')
                 return redirect(url_for('edit_grn', id=grn_obj.id))
 
-        date_str = (request.form.get('date') or '').strip()
-        time_str = (request.form.get('time') or '').strip()
-        now_dt = pk_now()
-        if date_str:
-            if time_str:
-                try:
-                    time_parts = time_str.split(':')
-                    if len(time_parts) == 2:
-                        date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M')
-                    else:
-                        date_posted = datetime.strptime(f"{date_str} {time_str}", '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    try:
-                        d = datetime.strptime(date_str, '%Y-%m-%d').date()
-                        date_posted = datetime.combine(d, now_dt.time())
-                    except ValueError:
-                        date_posted = now_dt
-            else:
-                try:
-                    d = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    if d == now_dt.date():
-                        date_posted = now_dt
-                    else:
-                        date_posted = datetime.combine(d, now_dt.time())
-                except ValueError:
-                    date_posted = now_dt
+        # Manual date / time override — same parser as the add path, so an
+        # edit accepts exactly what an add accepts (24-hour, 12-hour with
+        # AM/PM, optional seconds).  Older code silently fell back to the
+        # server clock on unreadable input, which mis-stamped the record.
+        # A post that carries neither field (programmatic callers) leaves the
+        # stored stamp untouched, exactly like before.
+        date_raw = request.form.get('date')
+        time_raw = request.form.get('time')
+        if (date_raw or '').strip() or (time_raw or '').strip():
+            try:
+                date_posted = parse_grn_datetime(date_raw, time_raw)
+            except ValueError as ve:
+                flash(str(ve), 'danger')
+                return redirect(url_for('edit_grn', id=grn_obj.id))
 
-            restricted = _enforce_grn_backdate_policy(date_posted, 'Edit GRN')
-            if restricted:
-                return restricted
-            grn_obj.date_posted = date_posted
+            if date_posted != grn_obj.date_posted:
+                restricted = _enforce_grn_backdate_policy(date_posted, 'Edit GRN')
+                if restricted:
+                    return restricted
+                grn_obj.date_posted = date_posted
+                # Keep the GRN's stock-ledger rows on the same stamp.  On a
+                # full edit the old rows are recreated below; on a header-only
+                # edit (locked lots) they are reused, and this is what used to
+                # drift away from the GRN's own date/time.
+                sync_grn_entry_timestamps(grn_obj)
 
         # Bill Date / Due Date are real form fields on the wizard — save them.
         # (Previously they were read on ADD but silently ignored on EDIT.)
@@ -511,9 +506,22 @@ def edit_grn(id):
         else:
             edit_skipped_lines = []
 
-        _sync_grn_auto_supplier_payment(grn_obj, old_supplier_id=old_supplier_id)
-        
-        db.session.commit()
+        # The auto supplier payment follows the GRN's date/time (and paid
+        # amount).  Moving a paid GRN into an already-reconciled period is
+        # refused by the accounting guard with a ValueError; surface that as a
+        # readable flash instead of an HTTP 500, and roll everything back so
+        # the record keeps its previous date/time.
+        try:
+            _sync_grn_auto_supplier_payment(grn_obj, old_supplier_id=old_supplier_id)
+            db.session.commit()
+        except ValueError as ve:
+            db.session.rollback()
+            flash(str(ve), 'danger')
+            return redirect(url_for('edit_grn', id=grn_obj.id))
+        except IntegrityError:
+            db.session.rollback()
+            flash('GRN not saved: the bill number or one of the values is already used by another record.', 'danger')
+            return redirect(url_for('edit_grn', id=grn_obj.id))
         if edit_skipped_lines:
             flash(
                 'GRN updated, but these item lines were NOT saved because quantity was 0 or negative: '
