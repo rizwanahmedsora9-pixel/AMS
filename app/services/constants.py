@@ -219,6 +219,7 @@ ENDPOINT_PERMISSION_MAP = {
     'add_supplier': 'can_manage_suppliers',
     'edit_supplier': 'can_manage_suppliers',
     'delete_supplier': 'can_manage_suppliers',
+    'hard_delete_supplier': 'can_manage_suppliers',
     'add_supplier_payment': 'can_manage_suppliers',
     'edit_supplier_payment': 'can_manage_suppliers',
     'delete_supplier_payment': 'can_manage_suppliers',

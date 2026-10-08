@@ -1,5 +1,32 @@
 {% extends "layout.html" %}
 {% block content %}
+<style>
+    .entry-highlighted {
+        background-color: rgba(234, 179, 8, 0.22) !important;
+        box-shadow: inset 4px 0 0 #eab308 !important;
+    }
+    .entry-highlighted > td {
+        background-color: transparent !important;
+    }
+    .row-star-btn {
+        cursor: pointer;
+        font-size: 1.15rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.15s ease, color 0.15s ease;
+        user-select: none;
+        line-height: 1;
+        color: rgba(255, 255, 255, 0.35);
+    }
+    .row-star-btn:hover {
+        transform: scale(1.25);
+        color: #facc15 !important;
+    }
+    .row-star-btn.starred {
+        color: #eab308 !important;
+    }
+</style>
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
     <h2 class="fw-bold text-warning mb-0"><i class="bi bi-box-arrow-in-down me-2"></i>Goods Receipt Notes</h2>
     <div class="d-flex gap-2 flex-wrap">
@@ -31,7 +58,8 @@
         <table class="table table-dark table-hover align-middle mb-0">
             <thead style="background: #0f172a;">
                 <tr>
-                    <th class="fw-bold py-3 ps-4 border-bottom border-secondary text-white-50">Date</th>
+                    <th class="text-center py-3 border-bottom border-secondary text-white-50" style="width: 42px;"><i class="bi bi-star text-warning" title="Click star to highlight line"></i></th>
+                    <th class="fw-bold py-3 ps-4 border-bottom border-secondary text-white-50">Date &amp; Time</th>
                     <th class="fw-bold py-3 border-bottom border-secondary text-white-50">Supplier</th>
                     <th class="fw-bold py-3 border-bottom border-secondary text-white-50">Auto Bill</th>
                     <th class="fw-bold py-3 border-bottom border-secondary text-white-50">Manual Bill</th>
@@ -44,6 +72,11 @@
             <tbody style="background: #1e293b;">
                 {% for grn in grns %}
                 <tr style="border-bottom: 1px solid #334155;">
+                    <td class="text-center" style="width: 42px;">
+                        <span class="row-star-btn" data-row-id="grn-{{ grn.id }}" title="Highlight entry">
+                            <i class="bi bi-star"></i>
+                        </span>
+                    </td>
                     <td class="ps-4 small text-white-50">{{ grn.date_posted.strftime('%d-%m-%Y %H:%M') }}</td>
                     <td class="fw-bold text-white">{{ grn.supplier }}</td>
                     <td><span class="badge bg-warning text-dark">{{ grn.auto_bill_no }}</span></td>
@@ -106,6 +139,14 @@
                     <div class="col-md-6">
                         <label class="text-white-50 small fw-bold mb-1">MANUAL BILL NO</label>
                         <input type="text" class="form-control bg-dark text-white border-secondary" name="manual_bill_no">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-white-50 small fw-bold mb-1">DATE</label>
+                        <input type="date" class="form-control bg-dark text-white border-secondary" name="date" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-white-50 small fw-bold mb-1">TIME</label>
+                        <input type="time" class="form-control bg-dark text-white border-secondary" name="time" required>
                     </div>
                     <div class="col-md-12">
                         <label class="text-white-50 small fw-bold mb-1">BILL PHOTO (OPTIONAL)</label>
@@ -225,6 +266,61 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
+
+    const grnStorageKey = 'ams_starred_grn_entries';
+    let grnStarred = new Set();
+    try {
+        const stored = localStorage.getItem(grnStorageKey);
+        if (stored) {
+            grnStarred = new Set(JSON.parse(stored));
+        }
+    } catch (e) {}
+
+    function syncGrnStarUi(btn, isStarred) {
+        const tr = btn.closest('tr');
+        const icon = btn.querySelector('i');
+        if (isStarred) {
+            btn.classList.add('starred');
+            if (icon) {
+                icon.className = 'bi bi-star-fill text-warning';
+            }
+            if (tr) {
+                tr.classList.add('entry-highlighted');
+            }
+        } else {
+            btn.classList.remove('starred');
+            if (icon) {
+                icon.className = 'bi bi-star';
+            }
+            if (tr) {
+                tr.classList.remove('entry-highlighted');
+            }
+        }
+    }
+
+    document.querySelectorAll('.row-star-btn').forEach(btn => {
+        const id = btn.getAttribute('data-row-id');
+        if (id && grnStarred.has(id)) {
+            syncGrnStarUi(btn, true);
+        }
+
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const rowId = this.getAttribute('data-row-id');
+            const nowStarred = !this.classList.contains('starred');
+            syncGrnStarUi(this, nowStarred);
+            if (rowId) {
+                if (nowStarred) {
+                    grnStarred.add(rowId);
+                } else {
+                    grnStarred.delete(rowId);
+                }
+                try {
+                    localStorage.setItem(grnStorageKey, JSON.stringify(Array.from(grnStarred)));
+                } catch (e) {}
+            }
+        });
+    });
 });
 </script>
 {% endblock %}

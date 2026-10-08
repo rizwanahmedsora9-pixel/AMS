@@ -23,6 +23,32 @@
         border-color: #41c28a;
         box-shadow: 0 0 0 0.2rem rgba(65, 194, 138, 0.25);
     }
+
+    .entry-highlighted {
+        background-color: rgba(234, 179, 8, 0.22) !important;
+        box-shadow: inset 4px 0 0 #eab308 !important;
+    }
+    .entry-highlighted > td {
+        background-color: transparent !important;
+    }
+    .row-star-btn {
+        cursor: pointer;
+        font-size: 1.15rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 0.15s ease, color 0.15s ease;
+        user-select: none;
+        line-height: 1;
+        color: #94a3b8;
+    }
+    .row-star-btn:hover {
+        transform: scale(1.25);
+        color: #eab308 !important;
+    }
+    .row-star-btn.starred {
+        color: #eab308 !important;
+    }
 </style>
 <div class="container-fluid">
     <div class="row mb-3">
@@ -108,15 +134,23 @@
 
                             </div>
 
-                            <div class="col-md-4">
+                            <div class="col-md-3 col-sm-6">
 
-                                <label class="form-label">Date</label>
+                                <label class="form-label"><i class="bi bi-calendar3 me-1"></i>Date</label>
 
-                                <input type="date" class="form-control" name="date" value="{{ edit_grn.date_posted.strftime('%Y-%m-%d') if edit_grn else today_date }}" required>
+                                <input type="date" class="form-control" name="date" id="grnDateInput" value="{{ edit_grn.date_posted.strftime('%Y-%m-%d') if edit_grn else today_date }}" required>
 
                             </div>
 
-                            <div class="col-md-4">
+                            <div class="col-md-2 col-sm-6">
+
+                                <label class="form-label"><i class="bi bi-clock me-1"></i>Time</label>
+
+                                <input type="time" class="form-control" name="time" id="grnTimeInput" value="{{ edit_grn.date_posted.strftime('%H:%M') if (edit_grn and edit_grn.date_posted) else (now_time or '') }}" required>
+
+                            </div>
+
+                            <div class="col-md-3">
 
                                 <label class="form-label">Payment Type</label>
 
@@ -443,9 +477,11 @@
 
                         <tr>
 
+                            <th class="text-center" style="width: 42px;"><i class="bi bi-star text-warning" title="Click star to highlight line"></i></th>
+
                             <th>GRN #</th>
 
-                            <th><a href="{{ url_for('grn', sort='date', search=search, start_date=start_date, end_date=end_date) }}" class="text-decoration-none {{ 'text-warning' if sort == 'date' else 'text-dark' }}">Date <i class="bi bi-arrow-down-up small"></i></a></th>
+                            <th><a href="{{ url_for('grn', sort='date', search=search, start_date=start_date, end_date=end_date) }}" class="text-decoration-none {{ 'text-warning' if sort == 'date' else 'text-dark' }}">Date &amp; Time <i class="bi bi-arrow-down-up small"></i></a></th>
 
                             <th><a href="{{ url_for('grn', sort='supplier', search=search, start_date=start_date, end_date=end_date) }}" class="text-decoration-none {{ 'text-warning' if sort == 'supplier' else 'text-dark' }}">Supplier <i class="bi bi-arrow-down-up small"></i></a></th>
 
@@ -467,11 +503,24 @@
 
                         <tr>
 
+                            <td class="text-center" style="width: 42px;">
+                                <span class="row-star-btn" data-row-id="grn-{{ grn.id }}" title="Highlight entry">
+                                    <i class="bi bi-star"></i>
+                                </span>
+                            </td>
+
                             <td>
                                 {% if grn.auto_bill_no %}<span class="badge bg-info text-dark me-1">{{ grn.auto_bill_no }}</span>{% endif %}
                                 {% if grn.manual_bill_no %}<span class="badge bg-warning text-dark">{{ grn.manual_bill_no }}</span>{% endif %}
                             </td>
-                            <td>{{ grn.date_posted.strftime('%d/%b/%Y') if grn.date_posted else '' }}</td>
+                            <td>
+                                {% if grn.date_posted %}
+                                    <div class="fw-bold">{{ grn.date_posted.strftime('%d/%b/%Y') }}</div>
+                                    <div class="small text-muted"><i class="bi bi-clock me-1"></i>{{ grn.date_posted.strftime('%I:%M %p') }}</div>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
 
                             <td>{{ grn.supplier }}</td>
 
@@ -910,6 +959,61 @@ document.addEventListener('DOMContentLoaded', function() {
         discountInput.addEventListener('input', updateGrnTotal);
     }
     updateGrnTotal();
+
+    const grnStorageKey = 'ams_starred_grn_entries';
+    let grnStarred = new Set();
+    try {
+        const stored = localStorage.getItem(grnStorageKey);
+        if (stored) {
+            grnStarred = new Set(JSON.parse(stored));
+        }
+    } catch (e) {}
+
+    function syncGrnStarUi(btn, isStarred) {
+        const tr = btn.closest('tr');
+        const icon = btn.querySelector('i');
+        if (isStarred) {
+            btn.classList.add('starred');
+            if (icon) {
+                icon.className = 'bi bi-star-fill text-warning';
+            }
+            if (tr) {
+                tr.classList.add('entry-highlighted');
+            }
+        } else {
+            btn.classList.remove('starred');
+            if (icon) {
+                icon.className = 'bi bi-star';
+            }
+            if (tr) {
+                tr.classList.remove('entry-highlighted');
+            }
+        }
+    }
+
+    document.querySelectorAll('.row-star-btn').forEach(btn => {
+        const id = btn.getAttribute('data-row-id');
+        if (id && grnStarred.has(id)) {
+            syncGrnStarUi(btn, true);
+        }
+
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const rowId = this.getAttribute('data-row-id');
+            const nowStarred = !this.classList.contains('starred');
+            syncGrnStarUi(this, nowStarred);
+            if (rowId) {
+                if (nowStarred) {
+                    grnStarred.add(rowId);
+                } else {
+                    grnStarred.delete(rowId);
+                }
+                try {
+                    localStorage.setItem(grnStorageKey, JSON.stringify(Array.from(grnStarred)));
+                } catch (e) {}
+            }
+        });
+    });
 });
 </script>
 
