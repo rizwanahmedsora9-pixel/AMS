@@ -121,6 +121,24 @@
                         </form>
                     </div>
 
+                    <!-- Option 1b: Transfer to correct supplier (preserves inventory/sales) -->
+                    <div class="card bg-info bg-opacity-10 border-info p-3 mb-3">
+                        <h6 class="text-info fw-bold mb-1"><i class="bi bi-arrow-right-circle me-1"></i> Option 1b: Transfer Data to Correct Supplier</h6>
+                        <p class="text-white-50 x-small mb-2">Moves all GRNs, payments and stock entries from this supplier to the correct supplier. Inventory totals and already-recorded customer sales are preserved; only supplier attribution/ledger ownership changes.</p>
+                        <form action="{{ url_for('transfer_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('Transfer all data from this supplier to the selected supplier?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <select name="target_supplier_id" class="form-select form-select-sm bg-dark text-white border-secondary mb-2" required>
+                                <option value="">-- Select correct supplier --</option>
+                                {% for ts in suppliers if ts.id != s.id and ts.is_active %}
+                                <option value="{{ ts.id }}">{{ ts.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-info btn-sm fw-bold text-dark">
+                                <i class="bi bi-arrow-right-circle me-1"></i> Transfer Data
+                            </button>
+                        </form>
+                    </div>
+
                     <!-- Option 2: Hard Delete & Wipe -->
                     <div class="card bg-danger bg-opacity-10 border-danger p-3">
                         <h6 class="text-danger fw-bold mb-1"><i class="bi bi-trash3-fill me-1"></i> Option 2: Hard Delete (Start Fresh)</h6>
