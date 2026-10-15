@@ -42,6 +42,16 @@
                     <a href="{{ url_for('supplier_ledger', id=s.id) }}" class="btn btn-info fw-bold">
                         <i class="bi bi-journal-text me-2"></i>View Ledger
                     </a>
+                    {% if s.transferred_to_id %}
+                    <a href="{{ url_for('supplier_ledger_shift_page', id=s.id) }}" class="btn btn-outline-info fw-bold">
+                        <i class="bi bi-arrow-left-right me-1"></i>Shift / Reclaim this ledger
+                    </a>
+                    <form action="{{ url_for('reclaim_supplier_ledger', id=s.id) }}" method="POST" class="d-grid" onsubmit="return confirm('Move this supplier\'s ledger back from the supplier it was shifted to?');">
+                        <button type="submit" class="btn btn-outline-success fw-bold">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reclaim shifted ledger
+                        </button>
+                    </form>
+                    {% endif %}
                     <div class="d-flex gap-2">
                         <button class="btn btn-outline-warning flex-grow-1" data-bs-toggle="modal" data-bs-target="#editSupplierModal{{ s.id }}">
                             <i class="bi bi-pencil"></i> Edit
@@ -137,6 +147,15 @@
                                 <i class="bi bi-arrow-right-circle me-1"></i> Transfer Data
                             </button>
                         </form>
+                    </div>
+
+                    <!-- Option 1c: Shift the whole ledger (clean move) -->
+                    <div class="card bg-primary bg-opacity-10 border-primary p-3 mb-3">
+                        <h6 class="text-primary fw-bold mb-1"><i class="bi bi-arrow-left-right me-1"></i> Option 1c: Shift Entire Ledger (Clean)</h6>
+                        <p class="text-white-50 x-small mb-2">Moves <strong>everything</strong> — all GRNs, every payment (active + voided), the opening balance, legacy stock rows, linked accounts and manual cash-flow entries — to the receiving supplier, and updates the Accounts section so cash/bank, payables and cash-flow stay in step. The old ledger becomes empty and the supplier can then be deleted cleanly.</p>
+                        <a href="{{ url_for('supplier_ledger_shift_page', id=s.id) }}" class="btn btn-primary btn-sm fw-bold">
+                            <i class="bi bi-arrow-left-right me-1"></i> Shift Entire Ledger…
+                        </a>
                     </div>
 
                     <!-- Option 2: Hard Delete & Wipe -->

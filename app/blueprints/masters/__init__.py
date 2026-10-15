@@ -12,6 +12,7 @@ from .add_supplier import *  # noqa
 from .edit_supplier import *  # noqa
 from .supplier_opening_balance import *  # noqa
 from .delete_supplier import *  # noqa
+from .shift_supplier_ledger import *  # noqa
 from .materials import *  # noqa
 from .delivery_persons_page import *  # noqa
 from .add_delivery_person import *  # noqa

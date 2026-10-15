@@ -53,3 +53,59 @@ the correct supplier.
 ## Rollback
 - Source supplier can be reactivated manually; a full reclaim can move data
   back using the same primitives if required.
+
+---
+
+# Extension: full supplier-ledger shift (clean move)
+
+## Problem the first pass left open
+`transfer_supplier` re-attributed GRNs and *active* payments only. After a
+transfer the old supplier still owned voided payments, its opening balance,
+legacy `Entry` stock rows, the accounts linked to it and any manual cash-flow
+rows — so its ledger was never empty, the payables KPIs still showed it, and
+`hard_delete_supplier` could still be blocked.
+
+## What the ledger shift adds
+`app/services/supplier_ledger_shift.py`:
+
+| Function | Purpose |
+|---|---|
+| `preview_supplier_ledger_shift(source, target=None, **options)` | Counts/amounts of everything that will move (used by the preview page + JSON API) |
+| `shift_supplier_ledger(source, target, actor=..., **options)` | The move: GRNs → payments → legacy entries → opening balance → accounts → cash flow → suspend source |
+| `shift_supplier_payment_to_supplier(payment, target)` | Single standalone payment row move (Accounts → Supplier Payments) |
+| `reclaim_supplier_ledger(source)` | Reverses the last shift from the ids stored in `accounting_audit_log` |
+| `create_target_supplier(name)` | "Shift to a brand new supplier" flow |
+
+Ordering matters: **payments move first**, then GRNs are re-attributed and
+`_sync_grn_auto_supplier_payment` refreshes each GRN's auto-payment in a
+savepoint. That way the auto-payment row is *updated in place* instead of being
+voided and re-posted, so the cash/bank balance is never double-counted and a
+finalised reconciliation period cannot abort the whole shift (it is reported as
+a warning instead).
+
+## Options (all default on, all toggleable in the UI)
+`move_opening_balance`, `move_legacy_entries`, `move_cash_flow`,
+`relink_accounts`, `rename_accounts`, `deactivate_source`.
+GRNs and supplier payments always move — they *are* the ledger.
+
+## Routes / UI
+* `GET /supplier_ledger_shift/<id>` — preview page (`templates/supplier_ledger_shift.html`)
+* `GET /api/supplier_ledger_shift_preview/<id>` — JSON preview
+* `POST /shift_supplier_ledger/<id>` — perform (requires `confirm=1`)
+* `POST /shift_supplier_payment/<id>` — single payment move
+* `POST /reclaim_supplier_ledger/<id>` — reclaim
+* Suppliers page delete modal → *Option 1c: Shift Entire Ledger (Clean)*
+* Supplier ledger header → *Shift entire ledger* / *Reclaim shifted ledger*
+* Supplier ledger rows → per-row shift icon (GRN, or standalone payment)
+
+`shift_grn_supplier` now honours an optional `return_to` form field (same-site
+paths only) so the ledger-row modal returns to the ledger page.
+
+## Invariants kept
+* Inventory quantities, material totals, `GRNItem` lots/locks, `GRNAllocation`
+  and `DirectSaleItem` FIFO links are untouched.
+* Everything happens in one transaction; per-GRN auto-payment refreshes use
+  savepoints and only downgrade to warnings.
+* `accounting_audit_log` gets a `LedgerShift` record containing the moved row
+  ids, the opening-balance delta, the account ids/name restore map and the
+  cash-flow ids — enough for a faithful reclaim.

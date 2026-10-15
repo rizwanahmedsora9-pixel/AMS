@@ -28,6 +28,9 @@
         </div>
         <div class="acc-toolbar">
             <a href="{{ url_for('accounts.dashboard') }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left me-1"></i>Dashboard</a>
+            {% if party_id_f %}
+            <a href="{{ url_for('supplier_ledger_shift_page', id=party_id_f) }}" class="btn btn-outline-primary btn-sm fw-bold" title="Move every ledger entry of the filtered supplier to another supplier"><i class="bi bi-arrow-left-right me-1"></i>Shift this supplier's ledger</a>
+            {% endif %}
             {% if not payments_readonly %}
             <button type="button" class="btn btn-danger btn-sm" onclick="openSupplierPaymentModal()"><i class="bi bi-plus-lg me-1"></i>New Payment</button>
             {% endif %}
@@ -90,11 +93,15 @@
                     <td class="text-end text-nowrap">
                         <a href="{{ url_for('download_supplier_payment', payment_id=p.id, action='print') }}" class="btn btn-outline-info btn-sm me-1" title="View"><i class="bi bi-eye"></i></a>
                         {% if meta.source_type %}
-                            <button type="button" class="btn btn-outline-secondary btn-sm" disabled title="Controlled by {{ meta.source_type }} #{{ meta.source_id }}"><i class="bi bi-link-45deg"></i></button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm me-1" disabled title="Controlled by {{ meta.source_type }} #{{ meta.source_id }}"><i class="bi bi-link-45deg"></i></button>
+                            <button type="button" class="btn btn-outline-primary btn-sm me-1" title="Move the {{ meta.source_type }} #{{ meta.source_id }} behind this payment to another supplier"
+                                    onclick="openSupplierPaymentShift('{{ url_for('shift_grn_supplier', id=meta.source_id) }}', '{{ meta.source_type }} #{{ meta.source_id }}')"><i class="bi bi-arrow-left-right"></i></button>
                         {% elif not payments_readonly and not p.is_void %}
                             <button type="button" class="btn btn-outline-warning btn-sm me-1" title="Edit" onclick="openSupplierPaymentModal({{ p.id }})"><i class="bi bi-pencil-square"></i></button>
                             <form id="delSupplierPaymentForm{{ p.id }}" action="{{ url_for('accounts.supplier_payment_delete', id=p.id) }}" method="POST" class="d-inline"></form>
                             <button type="button" class="btn btn-outline-danger btn-sm me-1" title="Delete" onclick="if(confirm('Delete this supplier payment? Its accounting effects will be reversed and its history retained.')) { document.getElementById('delSupplierPaymentForm{{ p.id }}').submit(); }"><i class="bi bi-trash"></i></button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" title="Move this payment to another supplier (Accounts + cash/bank follow)"
+                                    onclick="openSupplierPaymentShift('{{ url_for('shift_supplier_payment', id=p.id) }}', 'PAY-{{ p.id }}')"><i class="bi bi-arrow-left-right"></i></button>
                         {% elif not payments_readonly and p.is_void %}
                             <form action="{{ url_for('accounts.supplier_payment_restore', id=p.id) }}" method="POST" class="d-inline">
                                 <button class="btn btn-outline-success btn-sm me-1" title="Restore"><i class="bi bi-arrow-counterclockwise"></i></button>
@@ -121,6 +128,49 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Shared modal: move one payment (or the GRN behind it) to another supplier -->
+<div class="modal fade" id="supplierPaymentShiftModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form class="modal-content border-secondary" method="POST" id="supplierPaymentShiftForm" action="">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title text-primary fw-bold"><i class="bi bi-arrow-left-right me-2"></i>Shift to another supplier</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-dark border-secondary small mb-3">
+                    Moving <strong id="supplierPaymentShiftRef">this entry</strong>. The Accounts section follows the move:
+                    the supplier payment row, its cash/bank transaction, the payables KPI and the supplier ledger are all
+                    updated in one transaction. Inventory, FIFO links and customer sales are never touched.
+                </div>
+                <label class="form-label text-white-50 small fw-bold">Move to supplier</label>
+                <select name="target_supplier_id" class="form-select bg-dark text-white border-secondary" required>
+                    <option value="">-- Select supplier --</option>
+                    {% for s in suppliers %}
+                    <option value="{{ s.id }}" {{ 'selected' if party_id_f and party_id_f == s.id }}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text text-white-50">To move a whole ledger (and create a brand new supplier), use “Shift supplier ledger”.</div>
+                <input type="hidden" name="return_to" value="{{ request.full_path }}">
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary btn-sm fw-bold"><i class="bi bi-arrow-left-right me-1"></i>Shift entry</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+function openSupplierPaymentShift(action, reference) {
+    var form = document.getElementById('supplierPaymentShiftForm');
+    if (!form) return;
+    form.action = action;
+    var label = document.getElementById('supplierPaymentShiftRef');
+    if (label) { label.textContent = reference || 'this entry'; }
+    var modalEl = document.getElementById('supplierPaymentShiftModal');
+    if (modalEl && window.bootstrap) { bootstrap.Modal.getOrCreateInstance(modalEl).show(); }
+}
+</script>
 
 {% if not payments_readonly %}
 <!-- Single shared Create/Edit modal -->

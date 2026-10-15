@@ -108,14 +108,20 @@ def shift_grn_supplier(id):
     if not _user_can('can_manage_suppliers'):
         flash('Permission denied', 'danger')
         return redirect(url_for('grn'))
+    return_to = (request.form.get('return_to') or '').strip() or url_for('grn')
+
+    def _back():
+        # Only same-site paths are honoured (no open redirects).
+        return return_to if return_to.startswith('/') and not return_to.startswith('//') else url_for('grn')
+
     grn = db.session.get(GRN, id)
     if not grn:
         flash('GRN not found.', 'warning')
-        return redirect(url_for('grn'))
+        return redirect(_back())
     target_id = request.form.get('target_supplier_id') or request.form.get('target_id')
     if not target_id:
         flash('Target supplier is required.', 'danger')
-        return redirect(url_for('grn'))
+        return redirect(_back())
     try:
         from app.services.void_rebuild import shift_grn_to_supplier as do_shift_grn_supplier
         res = do_shift_grn_supplier(grn, int(target_id), actor=current_user)
@@ -131,4 +137,4 @@ def shift_grn_supplier(id):
         db.session.rollback()
         logging.exception('GRN supplier shift failed')
         flash('Unable to shift GRN supplier. Please try again.', 'danger')
-    return redirect(url_for('grn'))
+    return redirect(_back())
