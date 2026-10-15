@@ -1,0 +1,232 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  .ledger-card { background: #1e293b; border: 1px solid #475569; border-radius: 14px; }
+  .ledger-number { font-variant-numeric: tabular-nums; }
+</style>
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+  <div>
+    <h2 class="fw-bold text-warning mb-0"><i class="bi bi-arrow-left-right me-2"></i>Shift Supplier Ledger</h2>
+    <div class="text-white-50 small mt-1">
+      Move <strong>every</strong> ledger entry of
+      <span class="badge bg-dark border border-secondary text-info">{{ supplier.name }}</span>
+      to another supplier and leave the old ledger completely clean.
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-light" href="{{ back_url }}"><i class="bi bi-arrow-left me-1"></i>Back to ledger</a>
+  </div>
+</div>
+
+<div class="alert alert-dark border-secondary small mb-4">
+  <div class="fw-bold text-warning mb-1"><i class="bi bi-shield-check me-1"></i>What this does — and what it never touches</div>
+  <ul class="mb-0 ps-3">
+    <li>Moves <strong>GRNs, every supplier payment (active and voided), the opening balance, legacy stock rows, linked accounts and manual cash-flow rows</strong> to the receiving supplier.</li>
+    <li>Re-syncs the Accounts section in the same transaction: supplier payment rows, cash/bank transactions, the linked-account widgets and the cash-flow page all follow the move.</li>
+    <li>Leaves inventory quantities, material totals, GRN lots, FIFO allocations and customer sales <strong>exactly as they are</strong>.</li>
+    <li>Is reversible: after the shift, press <em>Reclaim</em> on the emptied supplier to move its ledger back.</li>
+  </ul>
+</div>
+
+{% if preview.locked_grns %}
+<div class="alert alert-info border-info small mb-4">
+  <i class="bi bi-lock me-1"></i>
+  {{ preview.locked_grns|length }} GRN lot(s) are already consumed by customer sales
+  ({{ preview.locked_grns[:5]|join(', ') }}{% if preview.locked_grns|length > 5 %}, …{% endif %}).
+  That is fine here — this shift preserves those sales.
+</div>
+{% endif %}
+
+<div class="card ledger-card shadow-sm mb-4">
+  <div class="card-header bg-transparent border-secondary"><h5 class="mb-0 text-info"><i class="bi bi-list-check me-2"></i>What will move</h5></div>
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-dark table-sm align-middle mb-0">
+        <thead><tr><th>Ledger part</th><th class="text-end">Count</th><th class="text-end">Amount</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><i class="bi bi-box-seam me-1 text-warning"></i>GRNs (stock receipts)</td>
+            <td class="text-end fw-bold">{{ preview.grns }}</td>
+            <td class="text-end">Rs {{ "{:,.2f}".format(preview.grn_total or 0) }}</td>
+            <td class="text-white-50 small">Inventory lots and FIFO links stay untouched</td>
+          </tr>
+          <tr>
+            <td><i class="bi bi-cash-stack me-1 text-danger"></i>Supplier payments</td>
+            <td class="text-end fw-bold">{{ preview.payments }}</td>
+            <td class="text-end">Rs {{ "{:,.2f}".format(preview.payments_total or 0) }}</td>
+            <td class="text-white-50 small">
+              {{ preview.active_payments }} active (Rs {{ "{:,.2f}".format(preview.payments_total or 0) }}) ·
+              {{ preview.voided_payments }} voided (Rs {{ "{:,.2f}".format(preview.voided_payments_total or 0) }}) ·
+              {{ preview.auto_payments }} GRN auto-payments (follow their GRN)
+            </td>
+          </tr>
+          <tr>
+            <td><i class="bi bi-wallet2 me-1 text-info"></i>Opening balance</td>
+            <td class="text-end">—</td>
+            <td class="text-end">Rs {{ "{:,.2f}".format(preview.opening_balance_movable or 0) }}</td>
+            <td class="text-white-50 small">Added to the receiving supplier's opening balance</td>
+          </tr>
+          <tr>
+            <td><i class="bi bi-journal-text me-1 text-warning"></i>Legacy stock rows named after this supplier</td>
+            <td class="text-end fw-bold">{{ preview.legacy_entries }}</td>
+            <td class="text-end">—</td>
+            <td class="text-white-50 small">Rows still carrying the old supplier name</td>
+          </tr>
+          <tr>
+            <td><i class="bi bi-bank me-1 text-success"></i>Linked accounts (Accounts section)</td>
+            <td class="text-end fw-bold">{{ preview.linked_accounts|length }}</td>
+            <td class="text-end">—</td>
+            <td class="text-white-50 small">
+              {% if preview.linked_accounts %}{{ preview.linked_accounts|map(attribute='name')|join(', ') }}{% else %}None linked{% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td><i class="bi bi-arrow-left-right me-1 text-primary"></i>Cash/bank transactions re-synced</td>
+            <td class="text-end fw-bold">{{ preview.account_transactions }}</td>
+            <td class="text-end">—</td>
+            <td class="text-white-50 small">Descriptions re-pointed to the receiving supplier</td>
+          </tr>
+          <tr>
+            <td><i class="bi bi-water me-1 text-info"></i>Manual cash-flow rows</td>
+            <td class="text-end fw-bold">{{ preview.cash_flow_entries }}</td>
+            <td class="text-end">—</td>
+            <td class="text-white-50 small">
+              {% if preview.cash_flow_parties %}{{ preview.cash_flow_parties|map(attribute='name')|join(', ') }} party row moves with them{% else %}No supplier party rows{% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="row g-3 mt-3">
+      <div class="col-6 col-md-3"><div class="card ledger-card h-100"><div class="card-body py-2">
+        <div class="text-white-50 small">Current ledger rows</div>
+        <div class="fs-5 fw-bold text-info">{{ preview.source.ledger_rows }}</div>
+      </div></div></div>
+      <div class="col-6 col-md-3"><div class="card ledger-card h-100"><div class="card-body py-2">
+        <div class="text-white-50 small">Current payable</div>
+        <div class="fs-5 fw-bold {{ 'text-danger' if preview.source.closing_balance > 0.009 else 'text-success' }}">Rs {{ "{:,.2f}".format(preview.source.closing_balance or 0) }}</div>
+      </div></div></div>
+      <div class="col-6 col-md-3"><div class="card ledger-card h-100"><div class="card-body py-2">
+        <div class="text-white-50 small">After the shift</div>
+        <div class="fs-5 fw-bold text-success">0 rows · Rs 0.00</div>
+      </div></div></div>
+      <div class="col-6 col-md-3"><div class="card ledger-card h-100"><div class="card-body py-2">
+        <div class="text-white-50 small">Receiving supplier payable</div>
+        <div class="fs-5 fw-bold text-warning">
+          {% if preview.target %}Rs {{ "{:,.2f}".format(preview.target.closing_balance or 0) }} → +Rs {{ "{:,.2f}".format(preview.source.closing_balance or 0) }}{% else %}Pick a supplier{% endif %}
+        </div>
+      </div></div></div>
+    </div>
+  </div>
+</div>
+
+<form method="POST" action="{{ url_for('shift_supplier_ledger', id=supplier.id) }}" id="ledgerShiftForm">
+  <div class="card ledger-card shadow-sm mb-4">
+    <div class="card-header bg-transparent border-secondary"><h5 class="mb-0 text-warning"><i class="bi bi-arrow-right-circle me-2"></i>Receiving supplier</h5></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-12 col-lg-6">
+          <label class="form-label text-white-50 small fw-bold">Move to an existing supplier</label>
+          <select name="target_supplier_id" id="targetSupplierSelect" class="form-select bg-dark text-white border-secondary">
+            <option value="">-- Select supplier --</option>
+            {% for s in suppliers %}
+            <option value="{{ s.id }}" {{ 'selected' if target and target.id == s.id }}>
+              {{ s.name }}{% if not s.is_active %} [Suspended]{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-text text-white-50">A suspended supplier cannot receive a ledger until it is activated.</div>
+        </div>
+        <div class="col-12 col-lg-6">
+          <label class="form-label text-white-50 small fw-bold">…or create a brand new supplier</label>
+          <input type="text" name="new_supplier_name" class="form-control bg-dark text-white border-secondary" placeholder="New supplier name (optional)" autocomplete="off">
+          <div class="row g-2 mt-2">
+            <div class="col-8">
+              <input type="text" name="new_supplier_phone" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="Phone (optional)">
+            </div>
+          </div>
+          <div class="form-text text-white-50">Type a name here to push the whole ledger onto a fresh, clean supplier.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card ledger-card shadow-sm mb-4">
+    <div class="card-header bg-transparent border-secondary"><h5 class="mb-0 text-info"><i class="bi bi-sliders me-2"></i>Include in the shift</h5></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="move_opening_balance" value="1" id="optOpening" {{ 'checked' if options.move_opening_balance }}>
+            <label class="form-check-label" for="optOpening">Opening balance <span class="text-white-50 small">(Rs {{ "{:,.2f}".format(supplier.opening_balance or 0) }})</span></label>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="move_legacy_entries" value="1" id="optEntries" {{ 'checked' if options.move_legacy_entries }}>
+            <label class="form-check-label" for="optEntries">Legacy stock rows carrying the old name</label>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="move_cash_flow" value="1" id="optCashFlow" {{ 'checked' if options.move_cash_flow }}>
+            <label class="form-check-label" for="optCashFlow">Manual cash-flow entries + party</label>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="relink_accounts" value="1" id="optAccounts" {{ 'checked' if options.relink_accounts }}>
+            <label class="form-check-label" for="optAccounts">Re-link accounts linked to this supplier</label>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="rename_accounts" value="1" id="optRename" {{ 'checked' if options.rename_accounts }}>
+            <label class="form-check-label" for="optRename">Rename those accounts after the new supplier</label>
+          </div>
+        </div>
+        <div class="col-12 col-md-6 col-xl-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="deactivate_source" value="1" id="optSuspend" {{ 'checked' if options.deactivate_source }}>
+            <label class="form-check-label" for="optSuspend">Suspend the emptied supplier &amp; mark it transferred</label>
+          </div>
+        </div>
+      </div>
+      <div class="form-check mt-3 border-top border-secondary pt-3">
+        <input class="form-check-input" type="checkbox" name="confirm" value="1" id="confirmShift" required>
+        <label class="form-check-label text-warning fw-bold" for="confirmShift">
+          I understand every entry of {{ supplier.name }} moves to the receiving supplier and the old ledger becomes empty.
+        </label>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <span class="text-white-50 small"><i class="bi bi-info-circle me-1"></i>Fully reversible with <em>Reclaim</em> on the emptied supplier.</span>
+      <button type="submit" class="btn btn-info fw-bold text-dark">
+        <i class="bi bi-arrow-left-right me-1"></i>Shift entire ledger
+      </button>
+    </div>
+  </div>
+</form>
+
+{% if preview.target_linked_accounts %}
+<div class="alert alert-warning border-warning small">
+  <i class="bi bi-exclamation-triangle me-1"></i>
+  The receiving supplier already has {{ preview.target_linked_accounts }} linked account(s). Both sets stay linked to it after the shift.
+</div>
+{% endif %}
+
+<script>
+(function () {
+  var select = document.getElementById('targetSupplierSelect');
+  if (!select) return;
+  select.addEventListener('change', function () {
+    var value = select.value;
+    var url = new URL(window.location.href);
+    if (value) { url.searchParams.set('target_supplier_id', value); }
+    else { url.searchParams.delete('target_supplier_id'); }
+    window.location.href = url.toString();
+  });
+})();
+</script>
+{% endblock %}

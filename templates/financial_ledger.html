@@ -63,6 +63,14 @@
     {% endif %}
     {% if is_client %}<a class="btn btn-outline-success" href="{{ url_for('accounts.client_payments', client=entity.code or entity.name) }}"><i class="bi bi-cash-stack me-1"></i>Payments</a>{% endif %}
     {% if is_supplier %}<a class="btn btn-outline-info" href="{{ url_for('accounts.supplier_payments', supplier=entity.id) }}"><i class="bi bi-cash-stack me-1"></i>Payments</a>{% endif %}
+    {% if is_supplier %}
+      <a class="btn btn-outline-primary fw-bold" href="{{ url_for('supplier_ledger_shift_page', id=entity.id) }}" title="Move every entry of this ledger to another supplier and update the Accounts section"><i class="bi bi-arrow-left-right me-1"></i>Shift entire ledger</a>
+      {% if entity.transferred_to_id %}
+      <form action="{{ url_for('reclaim_supplier_ledger', id=entity.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Move this ledger back from the supplier it was shifted to?');">
+        <button type="submit" class="btn btn-outline-success fw-bold"><i class="bi bi-arrow-counterclockwise me-1"></i>Reclaim shifted ledger</button>
+      </form>
+      {% endif %}
+    {% endif %}
     {% if is_driver %}<a class="btn btn-outline-info" href="{{ url_for('delivery_rents_page', driver=entity.name) }}"><i class="bi bi-truck me-1"></i>Delivery rents</a><button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#driverSettlementModal"><i class="bi bi-cash-stack me-1"></i>Pay driver</button>{% endif %}
     {% if opening_url %}<button class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#openingBalanceModal"><i class="bi bi-wallet2 me-1"></i>Opening balance</button>{% endif %}
     <a class="btn btn-outline-light" href="{{ back_url }}">Back</a>
@@ -147,6 +155,8 @@
                 <input type="hidden" name="id" value="{{ row.source_id }}">
                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete GRN"><i class="bi bi-trash"></i></button>
               </form>
+              <button type="button" class="btn btn-sm btn-outline-primary ms-1" title="Move only this GRN (with its auto-payment) to another supplier"
+                      onclick="openLedgerRowShift('grn', {{ row.source_id }}, '{{ row.reference|e }}')"><i class="bi bi-arrow-left-right"></i></button>
             {% elif is_supplier and row.source_type == 'GRN' and row.source_id and row.type == 'Payment' %}
               {# --- legacy paid-amount projection: manage it on the GRN itself --- #}
               <a href="{{ url_for('edit_grn', id=row.source_id) }}" class="btn btn-sm btn-outline-warning" title="This is the GRN's paid amount — edit it on the GRN"><i class="bi bi-pencil"></i> Edit GRN</a>
@@ -156,8 +166,12 @@
               <a href="{{ url_for('download_supplier_payment', payment_id=row.source_id, action='download') }}" class="btn btn-sm btn-outline-success me-1" title="Download payment receipt"><i class="bi bi-download"></i></a>
               {% if row.source and row.source.source_type == 'GRN' %}
                 <a href="{{ url_for('edit_grn', id=row.source.source_id) }}" class="btn btn-sm btn-outline-warning" title="Auto-payment created by GRN — edit it on the GRN"><i class="bi bi-pencil"></i> Edit GRN</a>
+                <button type="button" class="btn btn-sm btn-outline-primary ms-1" title="This auto-payment belongs to its GRN — shift the GRN instead"
+                        onclick="openLedgerRowShift('grn', {{ row.source.source_id }}, '{{ row.reference|e }}')"><i class="bi bi-arrow-left-right"></i></button>
               {% else %}
                 <a href="{{ url_for('accounts.supplier_payments', party_id=entity.id) }}" class="btn btn-sm btn-outline-warning me-1" title="Edit payment (Accounts → Supplier Payments)"><i class="bi bi-pencil"></i></a>
+                <button type="button" class="btn btn-sm btn-outline-primary me-1" title="Move this payment to another supplier (Accounts + cash/bank follow)"
+                        onclick="openLedgerRowShift('payment', {{ row.source_id }}, '{{ row.reference|e }}')"><i class="bi bi-arrow-left-right"></i></button>
                 <form action="{{ url_for('accounts.supplier_payment_delete', id=row.source_id) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete this supplier payment? Its accounting effects will be reversed and its history retained.');">
                   <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete payment"><i class="bi bi-trash"></i></button>
                 </form>
@@ -399,4 +413,50 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 });
 </script>
+{% if is_supplier %}
+<div class="modal fade" id="ledgerRowShiftModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content border-secondary" style="background:#1e293b" method="POST" id="ledgerRowShiftForm" action="">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title text-primary fw-bold"><i class="bi bi-arrow-left-right me-2"></i>Shift one ledger entry</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-dark border-secondary small">
+          Moving <strong id="ledgerRowShiftRef">this entry</strong> to another supplier.
+          The Accounts section follows: the supplier payment row, its cash/bank transaction and the
+          payables KPIs are re-pointed in the same transaction. Inventory quantities, FIFO links and
+          customer sales are never touched.
+        </div>
+        <label class="form-label text-white-50 small fw-bold">Move to supplier</label>
+        <select name="target_supplier_id" class="form-select bg-dark text-white border-secondary" required>
+          <option value="">-- Select supplier --</option>
+          {% for item in selector_entities if item.id != entity.id %}
+          <option value="{{ item.id }}" {{ 'disabled' if not item.is_active }}>{{ item.name }}{% if not item.is_active %} [Suspended]{% endif %}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text text-white-50">Need a brand new supplier? Use “Shift entire ledger” instead — it can create one.</div>
+        <input type="hidden" name="return_to" value="{{ request.full_path }}">
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm fw-bold"><i class="bi bi-arrow-left-right me-1"></i>Shift entry</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+function openLedgerRowShift(kind, rowId, reference) {
+  var form = document.getElementById('ledgerRowShiftForm');
+  if (!form) return;
+  form.action = (kind === 'grn')
+    ? '{{ url_for('shift_grn_supplier', id=0) }}'.replace('/0', '/' + rowId)
+    : '{{ url_for('shift_supplier_payment', id=0) }}'.replace('/0', '/' + rowId);
+  var label = document.getElementById('ledgerRowShiftRef');
+  if (label) { label.textContent = reference ? (reference + ' (' + kind.toUpperCase() + ')') : kind.toUpperCase(); }
+  var modalEl = document.getElementById('ledgerRowShiftModal');
+  if (modalEl && window.bootstrap) { bootstrap.Modal.getOrCreateInstance(modalEl).show(); }
+}
+</script>
+{% endif %}
 {% endblock %}

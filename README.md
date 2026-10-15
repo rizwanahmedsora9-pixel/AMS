@@ -135,6 +135,46 @@ be run against a copy of a live DB for an independent raw-SQL check.
 
 ---
 
+## Supplier ledger shift (moving a whole ledger)
+
+When a supplier's ledger was entered under the wrong name (a typo, a duplicate
+supplier, or a new "clean" supplier being started), the **Shift Supplier
+Ledger** flow moves *everything* to the receiving supplier in one transaction:
+
+* every GRN (matched by `supplier_id` **or** by the legacy stored name, exactly
+  like the ledger projection does),
+* every supplier payment — active, voided, standalone and GRN auto-payments,
+* the supplier's opening balance (added onto the target, zeroed on the source),
+* legacy `Entry` stock rows still carrying the old supplier name,
+* accounts linked to the supplier (`Account.linked_supplier_id` /
+  `linked_party_name`, optionally renamed),
+* the cash/bank transactions of the moved payments (descriptions re-pointed) and
+  manual cash-flow rows + their `CashFlowParty`.
+
+Inventory quantities, material totals, GRN lots, FIFO allocations
+(`GRNAllocation`, `DirectSaleItem.grn_item_id`) and customer sales are never
+touched. The emptied supplier is suspended and marked `transferred_to_id`, so it
+can be hard-deleted afterwards with no residue; **Reclaim** reverses the shift
+using the ids recorded in `accounting_audit_log`.
+
+Where to find it:
+
+| Entry point | Route |
+|---|---|
+| Suppliers page → delete modal → *Option 1c* | `GET /supplier_ledger_shift/<id>` |
+| Supplier ledger header → *Shift entire ledger* / *Reclaim shifted ledger* | `GET /supplier_ledger_shift/<id>`, `POST /reclaim_supplier_ledger/<id>` |
+| Supplier ledger row → shift icon (single GRN or single payment) | `POST /shift_grn_supplier/<id>`, `POST /shift_supplier_payment/<id>` |
+| JSON preview used by the page | `GET /api/supplier_ledger_shift_preview/<id>` |
+
+Service: `app/services/supplier_ledger_shift.py`
+(`shift_supplier_ledger`, `preview_supplier_ledger_shift`,
+`shift_supplier_payment_to_supplier`, `reclaim_supplier_ledger`).
+Tests: `tests/test_supplier_ledger_shift.py`. All routes require
+`can_manage_suppliers`. A GRN auto-payment cannot be moved on its own — it is
+owned by its GRN, so shift the GRN (its payment follows) or use the full shift.
+
+---
+
 ## Data: load, snapshot, migrate
 
 **Day-to-day full copy** (recommended): Import / Export Center →
