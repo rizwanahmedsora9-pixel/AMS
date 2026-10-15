@@ -3143,8 +3143,9 @@ class Installer:
                 if delivery is not None:
                     detail = "the newest GitHub push delivery returned %s" % delivery[1].get("status_code")
                 self.reporter.check("Push -> pull -> reload", MANUAL, detail=detail,
-                                    fix="push any commit to %s and check GitHub -> Recent Deliveries for "
-                                        "'Deployed <sha>; WSGI reload requested'" % self.o.branch)
+                                    fix="push any commit to %s; Recent Deliveries should answer "
+                                        "'Deploy queued' (200) within a second, then GET /deploy/status "
+                                        "reports 'Deployed <sha>; WSGI reload requested'" % self.o.branch)
             if self.o.verify_push and not self.detected.dirty:
                 confirm = self.prompt.confirm("verify the hook's pull path now (git fetch + merge --ff-only)",
                                               material=True)

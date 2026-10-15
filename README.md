@@ -287,8 +287,9 @@ Exit codes: `0` everything required is done, `2` done except the listed manual s
   never changed unless you pass `--update-webhook`.
 * **The first real push.** Only a signed push → pull → reload proves the pipeline.
   The installer deliberately does not create a commit to test it; push a commit to
-  the deployed branch and check *Recent Deliveries* for `Deployed <sha>; WSGI reload
-  requested`.
+  the deployed branch. *Recent Deliveries* should answer `Deploy queued` (200)
+  within a second, and once the background pull finishes GET `/deploy/status`
+  reports `Deployed <sha>; WSGI reload requested`.
 * **Secrets.** Tokens come from the environment, a `0600` file, or a hidden prompt —
   never from chat, never into Git, never into the log or report (only fingerprints).
   `--show-secret` is the one explicit, private display step for pasting the secret
@@ -411,8 +412,10 @@ pip install -r requirements.txt
    - Events: **Just the push event**; keep SSL verification enabled.
 
 5. GitHub's signed ping should return `pong`. After a push to the deployed
-   branch, inspect **Recent Deliveries** for `Deployed <commit>; WSGI reload
-   requested`, then verify the app and PythonAnywhere logs. These changes are
+   branch, **Recent Deliveries** should answer `Deploy queued` (200) within a
+   second; once the background pull finishes, GET `/deploy/status` reports
+   `Deployed <commit>; WSGI reload requested`. Then verify the app and
+   PythonAnywhere logs. These changes are
    currently on the Arena working branch; pushes here do not deploy `main`
    until merged. No live deployment has been performed by adding this code.
 
@@ -420,18 +423,26 @@ pip install -r requirements.txt
 
 - Optional `AMS_DEPLOY_SECRET_FILE` overrides `instance/deploy_secret.txt`.
   Set environment variables before importing `wsgi` and reload after changes.
-- Wrong branch, deleted branch, and non-push events are ignored. Missing
-  secrets return 503; bad signatures return 401; malformed JSON returns 400.
-- Local changes, a wrong checkout branch, or a concurrent deploy return 409.
-  Resolve the cause manually, then redeliver from GitHub. The hook never
-  stashes, resets, or discards server edits. Diverged branches fail safely.
-- Git commands have timeouts and cannot ask for interactive credentials.
-  For private repos, configure read access on the server separately. GitHub
-  may time out before a slow synchronous pull completes: check server logs
-  before redelivering. There is no background queue or automatic retry.
-- Deployment errors go to PythonAnywhere's error log, not public status
-  pages. GET `/deploy`, `/deploy/health`, and `/deploy/status` reveal no paths,
-  secrets, or Git logs. Reload failure returns an error even if code pulled.
+- Wrong branch, deleted branch, and non-push events are ignored (and answer
+  200 so Recent Deliveries stays clean). Missing secrets return 503; bad
+  signatures return 401; malformed JSON returns 400. Bodies above 32 MB
+  (`AMS_DEPLOY_MAX_BODY`) are refused with 413 before any parsing; anything
+  GitHub actually sends — including multi-megabyte push payloads from bulk
+  imports or patch stacks — is accepted and verified normally.
+- Local changes, a wrong checkout branch, or a diverged pull fail safely and
+  are reported at GET `/deploy/status` and in the server log. The hook never
+  stashes, resets, or discards server edits.
+- Signed pushes are acknowledged immediately — GitHub marks a delivery failed
+  when the response takes more than ~10 s — and the pull + reload runs on a
+  background worker. A burst of pushes coalesces: the worker re-pulls until it
+  lands the newest commit, and a lock held by another deploy is retried
+  automatically. Git commands have timeouts and cannot ask for interactive
+  credentials. For private repos, configure read access on the server
+  separately.
+- Deployment errors go to PythonAnywhere's error log. GET `/deploy`,
+  `/deploy/health`, and `/deploy/status` reveal no paths, secrets, or Git logs
+  (only the last result code and message). Reload failure returns an error
+  even if code pulled.
 - Dependencies are **not** installed by the hook. Install changed requirements
   manually and reload. AMS applies its existing migrations on startup; take
   a database snapshot before releases with schema changes. There is no
