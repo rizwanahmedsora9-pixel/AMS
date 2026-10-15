@@ -28,6 +28,7 @@ class Client(db.Model):
 class Supplier(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
+    transferred_to_id = db.Column(db.Integer, db.ForeignKey('supplier.id'), nullable=True)
     phone = db.Column(db.String(20))
     address = db.Column(db.String(200))
     opening_balance = db.Column(db.Float, default=0)

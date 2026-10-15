@@ -64,3 +64,71 @@ def delete_supplier(id, force_hard_delete=False):
 def hard_delete_supplier(id):
     """Dedicated endpoint to permanently delete a supplier and all associated data."""
     return delete_supplier(id, force_hard_delete=True)
+
+
+@bp.route('/transfer_supplier/<int:id>', methods=['POST'])
+@login_required
+def transfer_supplier(id):
+    """Move all GRNs/payments of a (wrong) supplier to the correct supplier."""
+    if not _user_can('can_manage_suppliers'):
+        flash('Permission denied', 'danger')
+        return redirect(url_for('suppliers'))
+    supplier = db.session.get(Supplier, id)
+    if not supplier:
+        flash('Supplier not found.', 'warning')
+        return redirect(url_for('suppliers'))
+    target_id = request.form.get('target_supplier_id') or request.form.get('target_id')
+    if not target_id:
+        flash('Target supplier is required.', 'danger')
+        return redirect(url_for('suppliers'))
+    try:
+        from app.services.void_rebuild import transfer_supplier as do_transfer_supplier
+        res = do_transfer_supplier(supplier, int(target_id), actor=current_user)
+        db.session.commit()
+        flash(
+            f"Transferred {res.get('grns_moved', 0)} GRN(s) and {res.get('payments_moved', 0)} payment(s) "
+            f"from '{res.get('source_supplier_name')}' to '{res.get('target_supplier_name')}'. "
+            f"Inventory and existing sales were preserved.",
+            'success'
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'danger')
+    except Exception as exc:
+        db.session.rollback()
+        logging.exception('Supplier transfer failed')
+        flash('Unable to transfer supplier data. Please try again.', 'danger')
+    return redirect(url_for('suppliers'))
+
+
+@bp.route('/shift_grn_supplier/<int:id>', methods=['POST'])
+@login_required
+def shift_grn_supplier(id):
+    """Move a single GRN's supplier attribution to the correct supplier."""
+    if not _user_can('can_manage_suppliers'):
+        flash('Permission denied', 'danger')
+        return redirect(url_for('grn'))
+    grn = db.session.get(GRN, id)
+    if not grn:
+        flash('GRN not found.', 'warning')
+        return redirect(url_for('grn'))
+    target_id = request.form.get('target_supplier_id') or request.form.get('target_id')
+    if not target_id:
+        flash('Target supplier is required.', 'danger')
+        return redirect(url_for('grn'))
+    try:
+        from app.services.void_rebuild import shift_grn_to_supplier as do_shift_grn_supplier
+        res = do_shift_grn_supplier(grn, int(target_id), actor=current_user)
+        db.session.commit()
+        if res.get('moved'):
+            flash(f"GRN #{grn.id} shifted from '{res.get('from_supplier')}' to '{res.get('to_supplier')}'. Inventory and sales preserved.", 'success')
+        else:
+            flash('GRN already belongs to the selected supplier.', 'info')
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'danger')
+    except Exception as exc:
+        db.session.rollback()
+        logging.exception('GRN supplier shift failed')
+        flash('Unable to shift GRN supplier. Please try again.', 'danger')
+    return redirect(url_for('grn'))
