@@ -381,3 +381,149 @@ def test_import_route_rejects_non_sqlite(import_app, client, tmp_path):
     assert resp.status_code == 200
     text = resp.get_data(as_text=True)
     assert "refused" in text or "failed" in text
+
+
+# ---------------------------------------------------------------------------
+# Atomicity + concurrent-writer regression tests (added 2026-10-20)
+# ---------------------------------------------------------------------------
+DDL_STRICT = """
+CREATE TABLE user(id INTEGER PRIMARY KEY, username TEXT UNIQUE, role TEXT);
+CREATE TABLE client(id INTEGER PRIMARY KEY, code TEXT, name TEXT NOT NULL);
+CREATE TABLE entry(id INTEGER PRIMARY KEY, client_id INTEGER, amount REAL, note TEXT);
+CREATE TABLE settings(k TEXT PRIMARY KEY, v TEXT);
+"""
+
+
+def _make_db_strict(path, users=(), clients=(), entries=()):
+    con = sqlite3.connect(str(path))
+    con.executescript(DDL_STRICT)
+    for uid, username, role in users:
+        con.execute("INSERT INTO user (id, username, role) VALUES (?, ?, ?)", (uid, username, role))
+    for cid, code, name in clients:
+        con.execute("INSERT INTO client (id, code, name) VALUES (?, ?, ?)", (cid, code, name))
+    for eid, cid, amount, note in entries:
+        con.execute("INSERT INTO entry (id, client_id, amount, note) VALUES (?, ?, ?, ?)",
+                    (eid, cid, amount, note))
+    con.commit()
+    con.close()
+
+
+def test_import_rolls_back_when_insert_fails(tmp_path):
+    """A row that violates a target constraint must roll the WHOLE
+    import back.  The wipe used to commit in its own transaction
+    before the load started, so a mid-import failure left the
+    target emptied.  (Source column is nullable, target is NOT NULL
+    — the name check passes, the insert then fails.)"""
+    from full_db_sync import export_snapshot, import_snapshot
+
+    src = tmp_path / "bad.db"
+    con = sqlite3.connect(str(src))
+    con.executescript(DDL_STRICT.replace("name TEXT NOT NULL", "name TEXT"))
+    con.execute("INSERT INTO user (id, username, role) VALUES (1, 'Admin', 'admin')")
+    con.execute("INSERT INTO client (id, code, name) VALUES (1, 'C-1', 'Good')")
+    con.execute("INSERT INTO client (id, code, name) VALUES (2, 'C-2', NULL)")
+    con.commit()
+    con.close()
+
+    target = tmp_path / "target.db"
+    _make_db_strict(
+        target,
+        users=[(1, "Admin", "admin")],
+        clients=[(100, "OLD", "Old client")],
+    )
+    snap = export_snapshot(src, out_path=tmp_path / "snap.amsdb")["out_path"]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        import_snapshot(snap, target, mode="clean_replace", backup_target=False)
+
+    # atomic: the target still holds its original rows, not an empty wipe
+    assert _rows(target, "client") == [(100, "OLD", "Old client")]
+    assert _count(target, "user") == 1
+
+
+def test_import_parity_survives_concurrent_writers(tmp_path):
+    """Background writers (auto-reconcile worker, audit logging, other
+    admin requests) committing while a large import runs used to land
+    rows between the load and the count check, tripping the parity
+    verification and reporting a fully-loaded import as FAILED.
+    The import now holds the write lock from wipe to verification."""
+    import threading
+    import time
+
+    from full_db_sync import export_snapshot, import_snapshot
+
+    src = tmp_path / "source.db"
+    con = sqlite3.connect(str(src))
+    con.executescript(DDL)
+    con.execute("INSERT INTO user (id, username, role) VALUES (1, 'Admin', 'admin')")
+    for i in range(1, 20001):
+        con.execute(
+            "INSERT INTO entry (id, client_id, amount, note) VALUES (?, 1, 1.0, ?)",
+            (i, f"row {i}"),
+        )
+    con.commit()
+    con.close()
+
+    target = tmp_path / "target.db"
+    _make_db(target, users=[(1, "Admin", "admin")], clients=[(1, "C", "X")], entries=[])
+    snap = export_snapshot(src, out_path=tmp_path / "snap.amsdb")["out_path"]
+
+    stop = threading.Event()
+
+    def spam_writer():
+        # Short busy timeout: while the import holds the write lock the
+        # insert raises "database is locked" and the loop retries.
+        con = sqlite3.connect(str(target), timeout=0.05)
+        while not stop.is_set():
+            try:
+                con.execute(
+                    "INSERT INTO settings (k, v) VALUES (?, 'x')",
+                    (f"k{time.time_ns()}",),
+                )
+                con.commit()
+            except sqlite3.OperationalError:
+                pass
+        con.close()
+
+    writer = threading.Thread(target=spam_writer, daemon=True)
+    writer.start()
+    try:
+        report = import_snapshot(snap, target, mode="clean_replace",
+                                 backup_target=False)
+    finally:
+        stop.set()
+        writer.join(timeout=10)
+
+    assert report["verification"] == "PASS"
+    assert report["count_mismatches"] == {}
+    assert report["rows_inserted_total"] == 20001
+
+
+def test_import_route_success_even_if_report_write_fails(
+        import_app, client, tmp_path, monkeypatch):
+    """Saving the JSON report is bookkeeping: if it fails, the UI
+    must still report the import as complete, not flash an error."""
+    import blueprints.import_export._pages_full_db as full_db_pages
+
+    def boom():
+        raise OSError("simulated unwritable report directory")
+
+    monkeypatch.setattr(full_db_pages, "_full_db_report_dir", boom)
+
+    from full_db_sync import export_snapshot
+
+    db_path = import_app.config["APP_DB_PATH"]
+    snap = export_snapshot(db_path, out_path=tmp_path / "snap.amsdb")["out_path"]
+
+    _login(client)
+    with open(snap, "rb") as handle:
+        resp = client.post(
+            "/import_export/full_db_import",
+            data={"file": handle, "mode": "clean_replace"},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+    assert resp.status_code == 200
+    text = resp.get_data(as_text=True)
+    assert "Full database import complete" in text
+    assert "failed unexpectedly" not in text

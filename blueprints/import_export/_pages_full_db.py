@@ -199,14 +199,25 @@ def full_db_import():
             "count_mismatches": report.get("count_mismatches"),
         }
         report_meta = meta
-        report_path = _full_db_report_dir() / report_name
-        with open(report_path, "w", encoding="utf-8") as handle:
-            json.dump(report, handle, ensure_ascii=False, indent=2, default=str)
+        # The import itself is already committed here — saving the
+        # JSON report is bookkeeping and must never turn a completed
+        # import into an error banner.
+        report_saved = True
         try:
-            session["full_db_import_report"] = report_name
-            session["full_db_import_report_meta"] = meta
+            report_path = _full_db_report_dir() / report_name
+            with open(report_path, "w", encoding="utf-8") as handle:
+                json.dump(report, handle, ensure_ascii=False, indent=2,
+                          default=str)
         except Exception:
-            pass
+            report_saved = False
+            report_name = None
+            traceback.print_exc()
+        if report_name:
+            try:
+                session["full_db_import_report"] = report_name
+                session["full_db_import_report_meta"] = meta
+            except Exception:
+                pass
         try:
             audit_log(
                 current_user,
@@ -239,7 +250,10 @@ def full_db_import():
                    " NOTE: the startup health baseline could not be refreshed — "
                    "delete instance/health_snapshot.json before the next start, "
                    "otherwise the app may refuse to boot (ALLOW_DB_DROP=1 "
-                   "overrides)."),
+                   "overrides).")
+                + ("" if report_saved else
+                   " NOTE: the JSON report file could not be written, but the "
+                   "import itself completed and was verified."),
                 "success",
             )
         else:
