@@ -602,37 +602,45 @@ def import_snapshot(source_path, target_db_path, *, mode: str = "clean_replace",
                 "source without those duplicate values, or relax the "
                 "constraints on the target manually."
             )
-        for idx in relaxed:
-            tcon.execute(f'DROP INDEX IF EXISTS {_q(idx["name"])}')
-
-        # ---- Pass 1: clean (delete every row) -----------------------------
+        # ---- Atomic clean-and-copy ---------------------------------------
+        # Index relaxation, wipe and load run inside ONE write
+        # transaction.  ``BEGIN IMMEDIATE`` takes the reserved lock up
+        # front, so:
+        #
+        # * the import is all-or-nothing — a failure part-way rolls
+        #   the target back to its pre-import data instead of leaving
+        #   it wiped (the wipe used to commit before the load began);
+        # * no concurrent writer (background reconcile worker, audit
+        #   logging, another admin request) can commit a row between
+        #   the wipe and the verification counts.  Such a stray row
+        #   used to trip the row-count parity check and report a fully
+        #   loaded import as FAILED — the "data is there but the UI
+        #   flashed an error" case.
+        # ``PRAGMA foreign_keys`` is a no-op inside a transaction, so
+        # it is switched off before the lock is taken.
+        tcon.execute("PRAGMA foreign_keys=OFF")
         deleted: Dict[str, int] = {}
-        if mode == "clean_replace":
-            wipe_tables = list_user_tables(tcon)
-            if not include_users:
-                wipe_tables = [t for t in wipe_tables
-                               if t not in ("user", "user_login_session")]
-            wipe_order = _fk_dependency_order(tcon, wipe_tables)
-            tcon.execute("PRAGMA foreign_keys=OFF")
-            tcon.execute("BEGIN")
-            try:
+        inserted: Dict[str, int] = {}
+        txn_open = False
+        try:
+            tcon.execute("BEGIN IMMEDIATE")
+            txn_open = True
+            for idx in relaxed:
+                tcon.execute(f'DROP INDEX IF EXISTS {_q(idx["name"])}')
+
+            if mode == "clean_replace":
+                wipe_tables = list_user_tables(tcon)
+                if not include_users:
+                    wipe_tables = [t for t in wipe_tables
+                                   if t not in ("user", "user_login_session")]
+                wipe_order = _fk_dependency_order(tcon, wipe_tables)
                 for t in reversed(wipe_order):
                     deleted[t] = _delete_one(tcon, t)
                 try:
                     tcon.execute("DELETE FROM sqlite_sequence")
                 except sqlite3.OperationalError:
                     pass
-            except Exception:
-                tcon.execute("ROLLBACK")
-                raise
-            else:
-                tcon.execute("COMMIT")
 
-        # ---- Pass 2: insert source rows with original ids ----------------
-        inserted: Dict[str, int] = {}
-        tcon.execute("PRAGMA foreign_keys=OFF")
-        tcon.execute("BEGIN")
-        try:
             for t in order:
                 cols = table_columns(tcon, t)  # == src cols for shared tables
                 col_sql = ", ".join(_q(c) for c in cols)
@@ -668,25 +676,33 @@ def import_snapshot(source_path, target_db_path, *, mode: str = "clean_replace",
                     tcon.executemany(ins_sql, batch)
                     n += len(batch)
                 inserted[t] = n
-        except Exception:
-            tcon.execute("ROLLBACK")
-            raise
-        else:
-            tcon.execute("COMMIT")
-        tcon.execute("PRAGMA foreign_keys=ON")
 
-        # ---- Verify -------------------------------------------------------
-        integrity_ok, integrity_rows = _integrity_detail(tcon)
-        fk_rows = _fk_violations(tcon)
-        after_counts = table_rows(tcon)
-        # Row-count parity against the source only applies to clean_replace
-        # (append intentionally keeps pre-existing rows, so totals differ).
-        count_mismatches = {}
-        if mode == "clean_replace":
-            count_mismatches = {
-                t: {"source": source_counts.get(t), "target": after_counts.get(t)}
-                for t in shared if source_counts.get(t) != after_counts.get(t)
-            }
+            # ---- Verify inside the same transaction ----------------------
+            # The write lock is still held, so these counts are a
+            # stable snapshot of exactly the rows this import loaded.
+            integrity_ok, integrity_rows = _integrity_detail(tcon)
+            fk_rows = _fk_violations(tcon)
+            after_counts = table_rows(tcon)
+            # Row-count parity against the source only applies to
+            # clean_replace (append intentionally keeps pre-existing
+            # rows, so totals differ).
+            count_mismatches = {}
+            if mode == "clean_replace":
+                count_mismatches = {
+                    t: {"source": source_counts.get(t), "target": after_counts.get(t)}
+                    for t in shared if source_counts.get(t) != after_counts.get(t)
+                }
+            tcon.execute("COMMIT")
+            txn_open = False
+        except Exception:
+            if txn_open:
+                try:
+                    tcon.execute("ROLLBACK")
+                except sqlite3.OperationalError:
+                    pass
+            raise
+        finally:
+            tcon.execute("PRAGMA foreign_keys=ON")
     finally:
         scon.close()
         tcon.close()
