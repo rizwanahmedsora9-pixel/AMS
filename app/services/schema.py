@@ -551,9 +551,11 @@ def _ensure_auto_bill_unique_indexes():
     duplicated auto bills: in that case the index for that table is skipped
     (logged) so bootstrapping a legacy DB never fails, and the counter stays
     ahead of the highest used sequence via ``_sync_bill_counter_with_db``.
+    Note: 'entry' is excluded because multi-item GRNs legitimately create
+    multiple Entry rows sharing the same GRN auto_bill_no.
     """
     tables = ("booking", "payment", "supplier_payment", "direct_sale",
-              "material_return", "grn", "entry")
+              "material_return", "grn")
     for table in tables:
         try:
             dup = db.session.execute(text(
@@ -641,6 +643,7 @@ _PERFORMANCE_INDEXES = [
     ("ix_material_return_manual_bill_no",  "CREATE INDEX IF NOT EXISTS ix_material_return_manual_bill_no  ON material_return(manual_bill_no)"),
     ("ix_material_return_auto_bill_no",    "CREATE INDEX IF NOT EXISTS ix_material_return_auto_bill_no    ON material_return(auto_bill_no)"),
     ("ix_entry_bill_no",           "CREATE INDEX IF NOT EXISTS ix_entry_bill_no           ON entry(bill_no)"),
+    ("ix_entry_auto_bill_no",      "CREATE INDEX IF NOT EXISTS ix_entry_auto_bill_no      ON entry(auto_bill_no)"),
     ("ix_entry_material",          "CREATE INDEX IF NOT EXISTS ix_entry_material          ON entry(material)"),
     ("ix_entry_type",              "CREATE INDEX IF NOT EXISTS ix_entry_type              ON entry(type)"),
     ("ix_pending_bill_bill_no",    "CREATE INDEX IF NOT EXISTS ix_pending_bill_bill_no    ON pending_bill(bill_no)"),
