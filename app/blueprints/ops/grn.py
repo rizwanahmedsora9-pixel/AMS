@@ -188,8 +188,20 @@ def grn():
             qtys = request.form.getlist('qty[]')
             prices = request.form.getlist('price[]')
 
+            item_array_lengths = (len(mat_names), len(qtys), len(prices))
+            if len(set(item_array_lengths)) > 1:
+                logger.warning(
+                    'GRN_ITEM_ARRAY_LENGTH_MISMATCH names=%d quantities=%d prices=%d user=%s',
+                    *item_array_lengths, _actor,
+                )
+
             skipped_lines = []
-            for name, qty, price in zip(mat_names, qtys, prices):
+            saved_item_count = 0
+            # Do not use zip() here: it silently stops at the shortest posted
+            # list, which can drop otherwise valid GRN lines when a browser or
+            # older form omits an optional value for one row.  Keep every row
+            # and default a missing optional value (rate) to zero.
+            for name, qty, price in zip_longest(mat_names, qtys, prices, fillvalue=''):
                 if not name:
                     continue
                 try:
@@ -227,6 +239,7 @@ def grn():
                     note=note
                 )
                 db.session.add(entry)
+                saved_item_count += 1
 
             _sync_grn_auto_supplier_payment(new_grn)
 
@@ -245,7 +258,7 @@ def grn():
                 return redirect(url_for('grn'))
             logger.info(
                 'GRN_COMMIT id=%s bill=%s items=%d elapsed_ms=%.1f',
-                new_grn.id, auto_bill, len(mat_names), (time.time() - _t0) * 1000.0,
+                new_grn.id, auto_bill, saved_item_count, (time.time() - _t0) * 1000.0,
             )
             if skipped_lines:
                 flash(
