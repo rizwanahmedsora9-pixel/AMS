@@ -257,7 +257,7 @@
                                     <div id="materialCombobox" class="combobox-list shadow-lg" style="display: none; width: 100%; top: 100%; left: 0;">
 
                                         {% for m in materials %}
-                                        <div class="combobox-item" data-code="{{ m.code }}" data-name="{{ m.name }}" data-price="{{ m.unit_price }}" onclick="selectMaterial('{{ m.name }}', '{{ m.unit_price }}')">
+                                        <div class="combobox-item" data-code="{{ m.code }}" data-name="{{ m.name }}" data-price="{{ m.unit_price }}">
                                             <span class="fw-bold text-warning">{{ m.code }}</span>
                                             <span class="text-white ms-1">- {{ m.name }}</span>
                                         </div>
@@ -804,6 +804,16 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('step3').scrollIntoView({behavior: 'smooth'});
     };
 
+    // Use data attributes rather than inline JavaScript so names containing
+    // quotes remain selectable and safe.
+    document.querySelectorAll('#materialCombobox .combobox-item').forEach(item => {
+        item.addEventListener('click', function() {
+            window.selectMaterial(
+                this.getAttribute('data-name') || '',
+                this.getAttribute('data-price') || ''
+            );
+        });
+    });
 
     const itemSearch = document.getElementById('itemSearch');
     itemSearch.addEventListener('change', function() {
@@ -833,21 +843,70 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
 
-    document.getElementById('addItemBtn').addEventListener('click', function() {
-        const name = document.getElementById('selectedItemName').value;
-        const price = parseFloat(document.getElementById('selectedItemPrice').value || 0);
-        const qty = parseFloat(document.getElementById('selectedItemQty').value || 0);
-        if (!name || Number.isNaN(qty) || qty < 0) { alert('Please select an item and enter valid quantity.'); return; }
+    function appendSelectedGrnItem() {
+        const nameInput = document.getElementById('selectedItemName');
+        const priceInput = document.getElementById('selectedItemPrice');
+        const qtyInput = document.getElementById('selectedItemQty');
+        const name = (nameInput.value || '').trim();
+        const qtyRaw = (qtyInput.value || '').trim();
+        const priceRaw = (priceInput.value || '').trim();
+        const qty = Number(qtyRaw);
+        const price = priceRaw === '' ? 0 : Number(priceRaw);
+
+        if (!name) {
+            alert('Please select an item first.');
+            return false;
+        }
+        if (!qtyRaw || !Number.isFinite(qty) || qty <= 0) {
+            alert('Please enter a quantity greater than zero.');
+            return false;
+        }
+        if (!Number.isFinite(price) || price < 0) {
+            alert('Please enter a valid item price.');
+            return false;
+        }
+
+        // Keep the markup static and set user-provided values as DOM values;
+        // names containing quotes/special characters remain a single line.
         const row = document.createElement('tr');
-        row.innerHTML = `<td><input type="hidden" name="grn_item_id[]" value=""><input type="text" class="form-control form-control-sm grn-item-name" name="mat_name[]" value="${name}" readonly></td><td><input type="number" class="form-control grn-item-qty" name="qty[]" step="any" min="0" inputmode="decimal" value="${qty}" style="font-size: 1.05rem; font-weight: bold;"></td><td><input type="number" class="form-control form-control-sm grn-item-price" name="price[]" step="any" min="0" inputmode="decimal" value="${price}"></td><td class="grn-row-total text-end" style="font-weight: bold; font-size: 1.05rem;">${formatNumber(price*qty)}</td><td><button type="button" class="btn btn-danger btn-sm remove-row"><i class="bi bi-trash"></i></button></td>`;
+        row.innerHTML = `
+            <td><input type="hidden" name="grn_item_id[]" value=""><input type="text" class="form-control form-control-sm grn-item-name" name="mat_name[]" readonly></td>
+            <td><input type="number" class="form-control grn-item-qty" name="qty[]" step="any" min="0" inputmode="decimal" style="font-size: 1.05rem; font-weight: bold;"></td>
+            <td><input type="number" class="form-control form-control-sm grn-item-price" name="price[]" step="any" min="0" inputmode="decimal"></td>
+            <td class="grn-row-total text-end" style="font-weight: bold; font-size: 1.05rem;"></td>
+            <td><button type="button" class="btn btn-danger btn-sm remove-row" title="Remove item"><i class="bi bi-trash"></i></button></td>
+        `;
+        row.querySelector('input[name="mat_name[]"]').value = name;
+        row.querySelector('input[name="qty[]"]').value = String(qty);
+        row.querySelector('input[name="price[]"]').value = String(price);
+        row.querySelector('.grn-row-total').textContent = formatNumber(price * qty);
         document.querySelector('#grnItemsTable tbody').appendChild(row);
         updateGrnTotal();
         itemSearch.value = '';
-        document.getElementById('selectedItemName').value = '';
-        document.getElementById('selectedItemPrice').value = '';
-        document.getElementById('selectedItemQty').value = '1';
-        itemSearch.focus();
+        nameInput.value = '';
+        priceInput.value = '';
+        qtyInput.value = '1';
+        return true;
+    }
+
+    document.getElementById('addItemBtn').addEventListener('click', function() {
+        if (appendSelectedGrnItem()) {
+            itemSearch.focus();
+        }
     });
+
+    // If the user selected/filled the next item but presses Save without
+    // clicking Add, include that pending line rather than silently saving only
+    // the rows already added to the table.
+    const grnForm = document.getElementById('grnForm');
+    if (grnForm) {
+        grnForm.addEventListener('submit', function(event) {
+            if ((document.getElementById('selectedItemName').value || '').trim()
+                    && !appendSelectedGrnItem()) {
+                event.preventDefault();
+            }
+        });
+    }
 
     const resetCurrentItemBtn = document.getElementById('resetCurrentItemBtn');
     if (resetCurrentItemBtn) {
