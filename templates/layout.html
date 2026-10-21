@@ -401,13 +401,12 @@
                 </h5>
             </div>
             <div class="modal-body">
-                <p class="text-white-50 mb-3">Action required. Please review and mark reminders as done.</p>
+                <p class="text-white-50 mb-3">Record the customer response, then mark the bill paid or schedule the agreed callback.</p>
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <small class="text-white-50">Due entries</small>
                     <span class="badge bg-warning text-dark" id="dueReminderCount">0</span>
                 </div>
-                <div id="dueReminderList" class="d-grid gap-2" style="max-height: 52vh; overflow-y: auto;"></div>
-                <div class="small text-white-50 mt-3">To close a reminder, open Notifications and write customer response.</div>
+                <div id="dueReminderList" class="d-grid gap-2" style="max-height: 60vh; overflow-y: auto;"></div>
             </div>
             <div class="modal-footer border-warning">
                 <a href="/notifications" class="btn btn-outline-info fw-bold">Open Notifications</a>
@@ -2132,26 +2131,86 @@ function toggleNavGroup(groupId, btn) {
         alert('Alarm test started for 10 seconds.');
     }
 
+    function escapeReminderText(value) {
+        return String(value || '').replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[char]));
+    }
+
     function renderDueReminderRows(items) {
         const list = document.getElementById('dueReminderList');
         const countEl = document.getElementById('dueReminderCount');
         if (!list) return;
         list.innerHTML = items.map(item => `
-            <div class="border border-secondary rounded p-3" id="dueRow-${item.id}">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div>
-                        <div class="fw-bold">${item.client || 'Unknown Client'} <span class="text-white-50">(${item.bill_no || 'No Bill'})</span></div>
-                        <div class="small text-warning">Due: ${item.remind_at}</div>
-                        <div class="small text-white-50">${item.note || 'No note'}</div>
-                    </div>
+            <div class="border border-secondary rounded p-3" id="dueRow-${Number(item.id)}" data-reminder-id="${Number(item.id)}">
+                <div class="fw-bold">${escapeReminderText(item.client || 'Unknown Client')} <span class="text-white-50">(${escapeReminderText(item.bill_no || 'No Bill')})</span></div>
+                <div class="small text-warning">Due: ${escapeReminderText(item.remind_at)}</div>
+                <div class="small text-white-50 mb-2">${escapeReminderText(item.note || 'No note')}</div>
+                <label class="form-label small mb-1" for="dueResponse-${Number(item.id)}">Customer response</label>
+                <textarea class="form-control form-control-sm bg-dark text-white border-secondary mb-2" id="dueResponse-${Number(item.id)}" rows="2" maxlength="200" required placeholder="What did the customer say?"></textarea>
+                <label class="form-label small mb-1" for="dueNote-${Number(item.id)}">Note (optional)</label>
+                <input class="form-control form-control-sm bg-dark text-white border-secondary mb-2" id="dueNote-${Number(item.id)}" maxlength="500" placeholder="Agreed details or internal note">
+                <div class="mb-2">
+                    <label class="form-label small mb-1" for="dueCallback-${Number(item.id)}">Next callback date and time</label>
+                    <input type="datetime-local" class="form-control form-control-sm bg-dark text-white border-secondary" id="dueCallback-${Number(item.id)}">
                 </div>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    <button type="button" class="btn btn-success btn-sm fw-bold" data-reminder-action="paid">Paid</button>
+                    <button type="button" class="btn btn-outline-info btn-sm fw-bold" data-reminder-action="callback">Schedule callback</button>
+                </div>
+                <div class="small text-danger mt-2 d-none" data-reminder-error></div>
             </div>
         `).join('');
         dueReminderIds = items.map(i => i.id);
-        if (countEl) {
-            countEl.innerText = String(dueReminderIds.length);
+        if (countEl) countEl.innerText = String(dueReminderIds.length);
+    }
+
+    async function resolveDueReminder(button) {
+        const row = button.closest('[data-reminder-id]');
+        if (!row) return;
+        const outcome = button.dataset.reminderAction;
+        const response = row.querySelector('textarea')?.value.trim() || '';
+        const callbackAt = row.querySelector('input[type="datetime-local"]')?.value || '';
+        const errorEl = row.querySelector('[data-reminder-error]');
+        if (!response) {
+            if (errorEl) { errorEl.textContent = 'Please enter the customer response.'; errorEl.classList.remove('d-none'); }
+            return;
+        }
+        if (outcome === 'callback' && !callbackAt) {
+            if (errorEl) { errorEl.textContent = 'Choose the agreed callback date and time.'; errorEl.classList.remove('d-none'); }
+            return;
+        }
+        row.querySelectorAll('button').forEach((el) => { el.disabled = true; });
+        if (errorEl) errorEl.classList.add('d-none');
+        try {
+            const res = await fetch(`/notifications/resolve_due/${Number(row.dataset.reminderId)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    outcome,
+                    response,
+                    note: row.querySelector('input:not([type="datetime-local"])')?.value.trim() || '',
+                    remind_at: callbackAt,
+                    channel: 'Call'
+                })
+            });
+            const result = await res.json();
+            if (!res.ok || !result.success) throw new Error(result.error || 'Could not update this reminder.');
+            row.remove();
+            dueReminderIds = dueReminderIds.filter((id) => Number(id) !== Number(row.dataset.reminderId));
+            const countEl = document.getElementById('dueReminderCount');
+            if (countEl) countEl.innerText = String(dueReminderIds.length);
+            if (!dueReminderIds.length && dueReminderModal) dueReminderModal.hide();
+        } catch (error) {
+            if (errorEl) { errorEl.textContent = error.message || 'Could not update this reminder.'; errorEl.classList.remove('d-none'); }
+            row.querySelectorAll('button').forEach((el) => { el.disabled = false; });
         }
     }
+
+    document.getElementById('dueReminderList')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-reminder-action]');
+        if (button) resolveDueReminder(button);
+    });
 
     function showDueReminderModal(items) {
         const modalEl = document.getElementById('dueReminderModal');

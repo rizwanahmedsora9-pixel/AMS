@@ -75,6 +75,7 @@ class FollowUpContact(db.Model):
     contacted_at = db.Column(db.DateTime, default=pk_model_now, nullable=False)
     channel = db.Column(db.String(30), default='Call')
     response = db.Column(db.String(200))
+    outcome = db.Column(db.String(20))
     note = db.Column(db.String(500))
     created_by = db.Column(db.String(80))
     created_at = db.Column(db.DateTime, default=pk_model_now, index=True)

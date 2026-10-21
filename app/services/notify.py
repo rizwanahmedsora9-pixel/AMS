@@ -164,6 +164,7 @@ def _resolve_reminder_with_contact(rem, response_text, channel='Call', note='', 
         contacted_at=contact_time,
         channel=channel,
         response=response_text[:200],
+        outcome='done',
         note=(note or 'Reminder marked done')[:500],
         created_by=created_by or ''
     ))

@@ -11,6 +11,17 @@ def notifications_page():
 
     rows = _build_notification_rows(category_filter=category, status_filter=status, risk_filter=risk, q=q)
     reminders = FollowUpReminder.query.filter_by(is_done=False).order_by(FollowUpReminder.remind_at.asc()).all()
+    completed_reminders = FollowUpReminder.query.filter_by(is_done=True).order_by(
+        FollowUpReminder.acknowledged_at.desc(), FollowUpReminder.id.desc()
+    ).limit(100).all()
+    completed_contact_by_reminder = {}
+    completed_ids = [rem.id for rem in completed_reminders]
+    if completed_ids:
+        completed_contacts = FollowUpContact.query.filter(
+            FollowUpContact.reminder_id.in_(completed_ids)
+        ).order_by(FollowUpContact.contacted_at.desc(), FollowUpContact.id.desc()).all()
+        for contact in completed_contacts:
+            completed_contact_by_reminder.setdefault(contact.reminder_id, contact)
     contacts = FollowUpContact.query.order_by(FollowUpContact.contacted_at.desc(), FollowUpContact.id.desc()).all()
     reminder_by_bill = {}
     contact_count_by_bill = {}
@@ -50,6 +61,8 @@ def notifications_page():
         'notifications.html',
         rows=rows,
         reminders=reminders,
+        completed_reminders=completed_reminders,
+        completed_contact_by_reminder=completed_contact_by_reminder,
         staff_emails=staff_emails,
         counts=counts,
         filters={'category': category, 'status': status, 'risk': risk, 'q': q}
@@ -307,6 +320,75 @@ def notifications_bill_detail(bill_id):
         additional_contacts=additional_contacts,
         severity_override=(_normalize_risk_label(pb.risk_override) if pb.risk_override else 'auto')
     )
+
+
+@bp.route('/notifications/resolve_due/<int:id>', methods=['POST'])
+@login_required
+def notifications_resolve_due(id):
+    """Record a due reminder's call outcome and either close it or schedule a callback."""
+    payload = request.get_json(silent=True) or request.form
+    rem = db.session.get(FollowUpReminder, id)
+    if not rem:
+        return jsonify({'success': False, 'error': 'Reminder not found'}), 404
+    if rem.is_done:
+        return jsonify({'success': False, 'error': 'This reminder is already completed'}), 409
+
+    outcome = (payload.get('outcome') or '').strip().lower()
+    response_text = (payload.get('response') or '').strip()
+    note = (payload.get('note') or '').strip()
+    channel = (payload.get('channel') or 'Call').strip()
+    if outcome not in ('paid', 'callback'):
+        return jsonify({'success': False, 'error': 'Choose Paid or Call back later'}), 400
+    if not response_text:
+        return jsonify({'success': False, 'error': 'Customer response is required'}), 400
+    if channel not in ['Call', 'WhatsApp', 'SMS', 'Email', 'Visit', 'Other']:
+        channel = 'Other'
+
+    callback_at = None
+    if outcome == 'callback':
+        callback_at = _parse_dt_safe(payload.get('remind_at'))
+        now = pk_now()
+        if not callback_at or callback_at <= now:
+            return jsonify({'success': False, 'error': 'Choose a future callback date and time'}), 400
+        another_active = FollowUpReminder.query.filter(
+            FollowUpReminder.pending_bill_id == rem.pending_bill_id,
+            FollowUpReminder.is_done == False,
+            FollowUpReminder.id != rem.id
+        ).first()
+        if another_active:
+            return jsonify({'success': False, 'error': 'This bill already has another active reminder'}), 409
+
+    bill = rem.pending_bill
+    if not bill:
+        return jsonify({'success': False, 'error': 'Pending bill not found'}), 404
+
+    now = pk_now()
+    db.session.add(FollowUpContact(
+        pending_bill_id=rem.pending_bill_id,
+        reminder_id=rem.id,
+        contacted_at=now,
+        channel=channel,
+        response=response_text[:200],
+        outcome=outcome,
+        note=note[:500],
+        created_by=(current_user.username if current_user.is_authenticated else '')
+    ))
+    rem.is_done = True
+    rem.acknowledged_at = now
+
+    if outcome == 'paid':
+        bill.is_paid = True
+        if bill.client_code == OPEN_KHATA_CODE or (bill.client_name or '').strip().upper() == OPEN_KHATA_NAME:
+            bill.is_cash = True
+    else:
+        db.session.add(FollowUpReminder(
+            pending_bill_id=rem.pending_bill_id,
+            remind_at=callback_at,
+            note=note[:500]
+        ))
+
+    db.session.commit()
+    return jsonify({'success': True, 'outcome': outcome})
 
 
 @bp.route('/notifications/ack_reminder/<int:id>', methods=['POST'])
