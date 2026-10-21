@@ -487,7 +487,7 @@ def financial_ledger(client_id):
             group_mat = d.booked_material or d.material
             display_mat = group_mat
             if d.booked_material and d.material and d.booked_material != d.material:
-                display_mat = f"{d.booked_material}>ALT>{d.material}"
+                display_mat = format_alt_material_label(d.booked_material, d.material)
             date_sort = None
             try:
                 if d.date and d.time:

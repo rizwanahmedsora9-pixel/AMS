@@ -33,7 +33,7 @@ def view_bill_detail(type, id):
             entry = entry_map.get(key, []).pop(0) if entry_map.get(key) else None
             name = it.product_name
             if entry and entry.booked_material and entry.material and entry.booked_material.strip() != entry.material.strip():
-                name = f"{entry.booked_material.strip()} > ALT > {entry.material.strip()}"
+                name = format_alt_material_label(entry.booked_material, entry.material)
             items.append({'name': name, 'qty': it.qty, 'price_at_time': it.price_at_time})
     elif type == 'MaterialReturn':
         bill = MaterialReturn.query.get_or_404(id)

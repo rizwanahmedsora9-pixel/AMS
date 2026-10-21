@@ -292,8 +292,15 @@ def add_direct_sale():
         if alt_input and (ignore_item or qty_booking <= 0):
             return _fail_sale(f'Alternate material is only allowed for booked items. "{mat_name}" has no booking balance.')
 
+        # The material physically delivered for this row.  When an alternate
+        # is supplied against a booked material, every slice of the row
+        # (booking fulfilment AND any excess beyond the booking balance) is
+        # the alternate material — no quantity of the originally booked
+        # material leaves the store.
+        delivered_mat = alt_obj.name if alt_obj else mat_name
+        delivered_obj = alt_obj or mat_obj
+
         if qty_booking > 0:
-            delivered_mat = alt_obj.name if alt_obj else mat_name
             processed_items.append({
                 'product_name': delivered_mat,
                 'booked_material': mat_name,
@@ -306,17 +313,22 @@ def add_direct_sale():
 
         if qty_sale > 0:
             if rate <= 0:
-                rate = float(mat_obj.unit_price or 0)
+                rate = float(delivered_obj.unit_price or 0)
             if rate <= 0:
-                missing_rate_non_booked.append(mat_name)
+                missing_rate_non_booked.append(delivered_mat)
             grn_item_id = None
             if idx < len(grn_item_ids) and grn_item_ids[idx]:
                 try:
                     grn_item_id = int(grn_item_ids[idx])
                 except (ValueError, TypeError):
                     grn_item_id = None
+            # A form-selected GRN lot belongs to the originally typed material;
+            # when an alternate was supplied the excess ships the alternate, so
+            # let FIFO pick lots of the delivered material instead.
+            if alt_obj:
+                grn_item_id = None
             processed_items.append({
-                'product_name': mat_name,
+                'product_name': delivered_mat,
                 'booked_material': None,
                 'qty': qty_sale,
                 'price_at_time': rate,
@@ -339,8 +351,13 @@ def add_direct_sale():
         mats = ', '.join(sorted(set(missing_rate_non_booked)))
         return _fail_sale(f'Rate is required for non-booked items: {mats}')
 
-    # 3. Stock Validation (Only for non-booked items)
-    # Aggregate required quantities first to prevent cumulative overrun
+    # 3. Stock Validation (Only for non-booked items + alternate fulfilments)
+    # Aggregate required quantities first to prevent cumulative overrun.
+    # Alternate booking fulfilments physically ship the DELIVERED material
+    # (item['product_name']), so stock must be validated against it — never
+    # against the originally booked material, which stays in the store.
+    # Both maps are keyed by the delivered material and validated together so
+    # a row split into booking + excess slices checks its combined quantity.
     required_stock = {}
     required_alt_stock = {}
     for item in processed_items:
@@ -348,21 +365,22 @@ def add_direct_sale():
             mat = item['product_name']
             required_stock[mat] = required_stock.get(mat, 0) + item['qty']
         elif item.get('is_alternate'):
-            mat = item.get('booked_material') or item['product_name']
+            mat = item['product_name']
             required_alt_stock[mat] = required_alt_stock.get(mat, 0) + item['qty']
 
-    for mat, req_qty in required_stock.items():
-        mat_obj = Material.query.filter_by(name=mat).first()
-        if mat_obj:
-            available = mat_obj.total or 0
-            if not allow_negative_stock and not global_negative_stock_allowed and available < req_qty:
-                raise ValueError(f"Insufficient stock for {mat}. Available: {available}, Required: {req_qty} (Non-booked). Enable 'Allow Negative Stock' or global setting to bypass.")
+    required_total_stock = dict(required_stock)
     for mat, req_qty in required_alt_stock.items():
+        required_total_stock[mat] = required_total_stock.get(mat, 0) + req_qty
+
+    for mat, req_qty in required_total_stock.items():
         mat_obj = Material.query.filter_by(name=mat).first()
         if mat_obj:
             available = mat_obj.total or 0
             if not allow_negative_stock and not global_negative_stock_allowed and available < req_qty:
-                raise ValueError(f"Insufficient stock for {mat}. Available: {available}, Required: {req_qty} (Alternate booking from original). Enable 'Allow Negative Stock' or global setting to bypass.")
+                detail = 'Non-booked'
+                if required_alt_stock.get(mat):
+                    detail = 'Alternate delivery' if not required_stock.get(mat) else 'Non-booked + Alternate delivery'
+                raise ValueError(f"Insufficient stock for {mat}. Available: {available}, Required: {req_qty} ({detail}). Enable 'Allow Negative Stock' or global setting to bypass.")
 
     total_qty = sum(_to_float_or_zero(item.get('qty')) for item in processed_items)
     if delivery_allocations and delivery_bags_total > (total_qty + 0.0001):

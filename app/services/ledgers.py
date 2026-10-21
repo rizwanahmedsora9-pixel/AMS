@@ -81,6 +81,7 @@ from app.services.lookups import (
 from app.services.sales_core import (
     _direct_sale_bill_refs,
     _rent_reconciliation_from_items,
+    format_alt_material_label,
 )
 from app.services.time_money import (
     _money_round,
@@ -545,7 +546,7 @@ def _build_client_ledger_rows(client):
             continue
         material_display = mat_name
         if d.booked_material and d.material and d.booked_material != d.material:
-            material_display = f"{d.booked_material}>ALT>{d.material}"
+            material_display = format_alt_material_label(d.booked_material, d.material)
         date_sort = None
         try:
             if d.date and d.time:

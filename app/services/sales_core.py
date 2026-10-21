@@ -582,6 +582,20 @@ def _material_norm_key(v):
     return re.sub(r'[^a-z0-9]+', '', txt)
 
 
+def format_alt_material_label(booked_material, delivered_material):
+    """Display label for an alternate-material delivery line.
+
+    The physically supplied (delivered) material must always be the primary
+    name on bills, ledgers and reports; the originally booked material is
+    only a reference explaining why an alternate was dispatched.
+    """
+    booked = (booked_material or '').strip()
+    delivered = (delivered_material or '').strip()
+    if booked and delivered and booked != delivered:
+        return f"{delivered} (ALT for booked {booked})"
+    return delivered or booked
+
+
 def _booking_allocated_qty_map(booking_item_ids):
     if not booking_item_ids:
         return {}
