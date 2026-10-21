@@ -160,4 +160,54 @@
         </div>
     </div>
 </div>
+
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="text-success fw-bold"><i class="bi bi-check-circle me-1"></i>Completed Reminders</span>
+        <span class="badge bg-success">{{ completed_reminders|length }} recent</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0 align-middle">
+            <thead>
+                <tr>
+                    <th>Client / Bill</th>
+                    <th>Reminder Deadline</th>
+                    <th>Completed</th>
+                    <th>Outcome</th>
+                    <th>Customer Response</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in completed_reminders %}
+                {% set c = completed_contact_by_reminder.get(r.id) %}
+                <tr>
+                    <td>
+                        <a href="{{ url_for('notifications_bill_detail', bill_id=r.pending_bill_id) }}" class="text-warning fw-bold text-decoration-none">
+                            {{ r.pending_bill.client_name or 'Unknown Client' }}
+                        </a>
+                        <div class="small text-white-50">{{ r.pending_bill.bill_no or '---' }}</div>
+                    </td>
+                    <td class="small">{{ r.remind_at.strftime('%Y-%m-%d %H:%M') if r.remind_at else '-' }}</td>
+                    <td class="small">{{ r.acknowledged_at.strftime('%Y-%m-%d %H:%M') if r.acknowledged_at else '-' }}</td>
+                    <td>
+                        {% if c and c.outcome == 'paid' %}
+                        <span class="badge bg-success">Paid</span>
+                        {% elif c and c.outcome == 'callback' %}
+                        <span class="badge bg-info text-dark">Callback scheduled</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Done</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ c.response if c else 'No response recorded' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-white-50 py-4">No completed reminders yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if completed_reminders|length >= 100 %}
+    <div class="card-footer small text-white-50">Showing the 100 most recently completed reminders.</div>
+    {% endif %}
+</div>
 {% endblock %}
