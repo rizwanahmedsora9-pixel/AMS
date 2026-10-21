@@ -16,10 +16,14 @@ Covered:
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime
 
 import pytest
 
-from models import db, Client, Material, Booking, BookingItem, Payment, Entry, Account
+from models import (
+    db, Client, Material, Booking, BookingItem, Payment, Entry, Account,
+    Supplier, GRN, GRNItem, SupplierPayment,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +341,54 @@ def test_client_ledger_pdf_download_returns_a_real_pdf(app, client, seeded):
         f"client ledger PDF is NOT a PDF (Content-Disposition={disposition!r}); "
         f"first bytes={resp.data[:60]!r}"
     )
+
+
+def test_supplier_ledger_pdf_download_includes_all_detailed_transactions(app, client):
+    """Supplier PDF includes the complete ledger, GRN line detail, and payment."""
+    login(client)
+    with app.app_context():
+        supplier = Supplier(
+            name="LEDGER PDF SUPPLIER",
+            phone="03001234567",
+            address="Supplier test address",
+            opening_balance=1250,
+        )
+        grn = GRN(
+            supplier="LEDGER PDF SUPPLIER",
+            manual_bill_no="GRN-PDF-001",
+            supplier_invoice_no="INV-PDF-001",
+            date_posted=datetime(2026, 2, 3),
+            note="GRN PDF detail note",
+        )
+        grn.items.append(GRNItem(mat_name="PDF TEST CEMENT", qty=10, price_at_time=250))
+        db.session.add_all([supplier, grn])
+        db.session.flush()
+        grn.supplier_id = supplier.id
+        payment = SupplierPayment(
+            supplier_id=supplier.id,
+            amount=500,
+            method="Bank",
+            manual_bill_no="PAY-PDF-001",
+            date_posted=datetime(2026, 2, 5),
+            note="Payment PDF detail note",
+        )
+        db.session.add(payment)
+        supplier_id = supplier.id
+        db.session.commit()
+
+    resp = client.get(f"/download_supplier_ledger/{supplier_id}?action=pdf")
+    assert resp.status_code == 200
+    assert resp.data[:5] == b"%PDF-", (
+        f"supplier ledger download is not a PDF: {resp.headers.get('Content-Type')!r}"
+    )
+    assert "pdf" in resp.headers.get("Content-Disposition", "").lower()
+    text = _pdf_text(resp.data)
+    for needle in (
+        "LEDGER PDF SUPPLIER", "GRN-PDF-001", "INV-PDF-001",
+        "PDF TEST CEMENT", "GRN PDF detail note", "PAY-PDF-001",
+        "Payment PDF detail note", "1,250.00", "2,500.00", "3,250.00",
+    ):
+        assert needle in text, f"{needle!r} missing from supplier PDF"
 
 
 def test_full_client_history_pdf_returns_a_real_pdf(app, client, seeded):

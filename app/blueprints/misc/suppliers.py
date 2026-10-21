@@ -80,13 +80,40 @@ def download_supplier_ledger(id):
     from app.services.financial_ledgers import build_supplier_financial_ledger
     ledger = build_supplier_financial_ledger(supplier, **filters)
     action = (request.args.get('action') or 'download').lower()
+    filtered_rows = ledger['filtered_rows']
+
+    if action == 'pdf':
+        generated_at = pk_now()
+        total_debit = sum(float(row.get('debit') or 0) for row in filtered_rows)
+        total_credit = sum(float(row.get('credit') or 0) for row in filtered_rows)
+        final_balance = filtered_rows[-1]['balance'] if filtered_rows else ledger['closing_balance']
+        rendered = render_template(
+            'supplier_financial_ledger_pdf.html',
+            supplier=supplier,
+            settings=Settings.query.first(),
+            ledger=filtered_rows,
+            final_balance=final_balance,
+            total_debit=total_debit,
+            total_credit=total_credit,
+            generated_at=generated_at,
+        )
+        filename = _download_filename('SUPPLIERLEDGER', 'pdf')
+        pdf_response = _try_render_weasy_pdf(rendered, filename, disposition='attachment')
+        if pdf_response:
+            return pdf_response
+        response = make_response(rendered)
+        response.headers['Content-Disposition'] = f'attachment; filename={_download_filename("SUPPLIERLEDGER", "html")}'
+        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+        _disable_response_cache(response)
+        return response
+
     if action != 'print':
         import csv
         from io import StringIO
         out = StringIO(newline='')
         writer = csv.writer(out)
         writer.writerow(['Date', 'Type', 'Reference', 'Description', 'Debit', 'Credit', 'Balance', 'Account', 'Notes'])
-        for row in ledger['filtered_rows']:
+        for row in filtered_rows:
             writer.writerow([
                 row['date'].strftime('%Y-%m-%d %H:%M') if row.get('date') and row['date'] != datetime.min else '',
                 row.get('type', ''), row.get('reference', ''), row.get('description', ''),
@@ -98,7 +125,7 @@ def download_supplier_ledger(id):
         return response
     rendered = render_template(
         'supplier_ledger_print.html',
-        supplier=supplier, ledger=ledger['filtered_rows'],
+        supplier=supplier, ledger=filtered_rows,
         final_balance=ledger['closing_balance'], total_bill=ledger['total_credit'],
         total_paid=ledger['total_debit'], generated_at=pk_now(), auto_print=True
     )
