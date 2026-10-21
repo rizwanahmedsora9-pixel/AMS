@@ -57,7 +57,8 @@
     {% if is_client %}
       <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_client_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export / download</a>
     {% elif is_supplier %}
-      <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_supplier_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export / download</a>
+      <a class="btn btn-warning text-dark fw-bold" href="{{ url_for('download_supplier_ledger', id=entity.id, action='pdf') }}"><i class="bi bi-file-earmark-pdf me-1"></i>Download full ledger PDF</a>
+      <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_supplier_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export CSV</a>
     {% else %}
       <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_delivery_person_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export / download</a>
     {% endif %}
