@@ -148,6 +148,42 @@ def _build_notification_rows(category_filter='all', status_filter='all', risk_fi
     return rows
 
 
+def _mark_pending_bill_paid_and_stop_reminders(bill, created_by='', paid_at=None):
+    """Mark *bill* paid and close every reminder so no later call alarm appears.
+
+    This deliberately updates the notification/payment-status flag only. It
+    does not create an accounting receipt, matching the existing Paid action
+    in the due-reminder dialog.
+    """
+    if not bill:
+        return []
+
+    closed_at = paid_at or pk_now()
+    bill.is_paid = True
+    if bill.client_code == OPEN_KHATA_CODE or (bill.client_name or '').strip().upper() == OPEN_KHATA_NAME:
+        bill.is_cash = True
+
+    active_reminders = FollowUpReminder.query.filter_by(
+        pending_bill_id=bill.id,
+        is_done=False,
+    ).all()
+    for reminder in active_reminders:
+        reminder.is_done = True
+        reminder.acknowledged_at = closed_at
+        db.session.add(FollowUpContact(
+            pending_bill_id=bill.id,
+            reminder_id=reminder.id,
+            contacted_at=closed_at,
+            channel='Other',
+            response='Payment received before follow-up call',
+            outcome='paid',
+            note='Marked paid directly; reminder stopped without calling the customer.',
+            created_by=created_by or '',
+        ))
+
+    return active_reminders
+
+
 def _resolve_reminder_with_contact(rem, response_text, channel='Call', note='', contacted_at=None, created_by=''):
     if not rem:
         return False, 'Reminder not found'

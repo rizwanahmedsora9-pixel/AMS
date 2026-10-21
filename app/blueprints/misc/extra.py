@@ -7,15 +7,20 @@ from flask import current_app
 def toggle_bill_paid(id):
     bill = db.session.get(PendingBill, id)
     if bill:
-        bill.is_paid = not bill.is_paid
-        is_open_khata_bill = (
-            bill.client_code == OPEN_KHATA_CODE or
-            (bill.client_name or '').strip().upper() == OPEN_KHATA_NAME
-        )
-        if bill.is_paid and is_open_khata_bill:
-            bill.is_cash = True
-        elif (not bill.is_paid) and is_open_khata_bill:
-            bill.is_cash = False
+        marking_paid = not bill.is_paid
+        if marking_paid:
+            _mark_pending_bill_paid_and_stop_reminders(
+                bill,
+                created_by=(current_user.username if current_user.is_authenticated else ''),
+            )
+        else:
+            bill.is_paid = False
+            is_open_khata_bill = (
+                bill.client_code == OPEN_KHATA_CODE or
+                (bill.client_name or '').strip().upper() == OPEN_KHATA_NAME
+            )
+            if is_open_khata_bill:
+                bill.is_cash = False
         db.session.commit()
         return jsonify({'success': True, 'is_paid': bill.is_paid})
     return jsonify({'success': False}), 404
