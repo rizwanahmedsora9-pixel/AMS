@@ -10,7 +10,11 @@ def notifications_page():
     q = request.args.get('q', '').strip()
 
     rows = _build_notification_rows(category_filter=category, status_filter=status, risk_filter=risk, q=q)
-    reminders = FollowUpReminder.query.filter_by(is_done=False).order_by(FollowUpReminder.remind_at.asc()).all()
+    reminders = FollowUpReminder.query.join(PendingBill).filter(
+        FollowUpReminder.is_done == False,
+        PendingBill.is_paid == False,
+        PendingBill.is_void == False,
+    ).order_by(FollowUpReminder.remind_at.asc()).all()
     completed_reminders = FollowUpReminder.query.filter_by(is_done=True).order_by(
         FollowUpReminder.acknowledged_at.desc(), FollowUpReminder.id.desc()
     ).limit(100).all()
@@ -72,7 +76,11 @@ def notifications_page():
 @bp.route('/notifications/upcoming')
 @login_required
 def notifications_upcoming():
-    reminders = FollowUpReminder.query.filter_by(is_done=False).order_by(FollowUpReminder.remind_at.asc()).all()
+    reminders = FollowUpReminder.query.join(PendingBill).filter(
+        FollowUpReminder.is_done == False,
+        PendingBill.is_paid == False,
+        PendingBill.is_void == False,
+    ).order_by(FollowUpReminder.remind_at.asc()).all()
     now = pk_now()
     return render_template('notifications_upcoming.html', reminders=reminders, now=now)
 
@@ -320,6 +328,32 @@ def notifications_bill_detail(bill_id):
         additional_contacts=additional_contacts,
         severity_override=(_normalize_risk_label(pb.risk_override) if pb.risk_override else 'auto')
     )
+
+
+@bp.route('/notifications/mark_paid/<int:bill_id>', methods=['POST'])
+@login_required
+def notifications_mark_paid(bill_id):
+    """One-click Paid action from notification detail, without a dialog."""
+    bill = db.session.get(PendingBill, bill_id)
+    if not bill:
+        flash('Pending bill not found', 'danger')
+        return redirect(url_for('notifications_page'))
+    if bill.is_void:
+        flash('A void bill cannot be marked paid', 'danger')
+        return redirect(url_for('notifications_page'))
+
+    was_paid = bill.is_paid
+    # Idempotent handling also cleans up any stale legacy reminders.
+    stopped = _mark_pending_bill_paid_and_stop_reminders(
+        bill,
+        created_by=(current_user.username if current_user.is_authenticated else ''),
+    )
+    db.session.commit()
+    message = 'Bill was already paid' if was_paid else 'Bill marked paid'
+
+    reminder_text = f'; {len(stopped)} reminder(s) stopped' if stopped else '; no active reminder remained'
+    flash(message + reminder_text + '. No follow-up call is needed.', 'success')
+    return redirect(url_for('notifications_page'))
 
 
 @bp.route('/notifications/resolve_due/<int:id>', methods=['POST'])

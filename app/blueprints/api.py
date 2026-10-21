@@ -228,10 +228,14 @@ def api_notifications_contact_history(bill_id):
 @login_required
 def api_notifications_due():
     now = pk_now()
-    due = FollowUpReminder.query.filter(
+    # Never alarm for a bill that has already been paid or voided, even if a
+    # stale reminder exists from older data or another payment workflow.
+    due = FollowUpReminder.query.join(PendingBill).filter(
         FollowUpReminder.is_done == False,
         FollowUpReminder.remind_at <= now,
-        FollowUpReminder.alerted_at == None
+        FollowUpReminder.alerted_at == None,
+        PendingBill.is_paid == False,
+        PendingBill.is_void == False,
     ).order_by(FollowUpReminder.remind_at.asc()).all()
     payload = []
     for r in due:

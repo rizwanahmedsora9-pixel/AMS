@@ -122,3 +122,90 @@ def test_due_reminder_rejects_missing_response_and_past_callback(client, app):
         reminder = db.session.get(FollowUpReminder, reminder_id)
         assert reminder.is_done is False
         assert FollowUpContact.query.filter_by(reminder_id=reminder_id).count() == 0
+
+
+def test_notification_detail_has_direct_paid_button_without_popup(client, app):
+    _login(client)
+    bill_id, _reminder_id = _make_due_reminder(app, "DETAIL-BUTTON")
+
+    response = client.get(f"/notifications/bill/{bill_id}")
+
+    assert response.status_code == 200
+    assert f'/notifications/mark_paid/{bill_id}'.encode() in response.data
+    assert "Paid — Stop Reminders".encode() in response.data
+    assert b'onclick="confirm' not in response.data
+    assert b'data-bs-toggle="modal"' not in response.data
+
+
+def test_detail_paid_action_needs_no_response_and_stops_all_reminders(client, app):
+    _login(client)
+    bill_id, first_reminder_id = _make_due_reminder(app, "DETAIL-PAID")
+    with app.app_context():
+        second_reminder = FollowUpReminder(
+            pending_bill_id=bill_id,
+            remind_at=datetime.now() + timedelta(days=1),
+            note="Legacy duplicate future reminder",
+            is_done=False,
+        )
+        db.session.add(second_reminder)
+        db.session.commit()
+        second_reminder_id = second_reminder.id
+
+    # No customer-response form and no confirmation/modal step is required.
+    response = client.post(
+        f"/notifications/mark_paid/{bill_id}",
+        data={},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/notifications")
+    with app.app_context():
+        bill = db.session.get(PendingBill, bill_id)
+        reminders = FollowUpReminder.query.filter_by(pending_bill_id=bill_id).all()
+        contacts = FollowUpContact.query.filter_by(pending_bill_id=bill_id).all()
+        assert bill.is_paid is True
+        assert {r.id for r in reminders} == {first_reminder_id, second_reminder_id}
+        assert all(r.is_done and r.acknowledged_at for r in reminders)
+        assert {c.reminder_id for c in contacts} == {first_reminder_id, second_reminder_id}
+        assert all(c.outcome == "paid" for c in contacts)
+        assert all(c.response == "Payment received before follow-up call" for c in contacts)
+
+    due = client.get("/api/notifications/due")
+    assert due.status_code == 200
+    assert due.json == []
+
+
+def test_due_alarm_never_returns_stale_reminder_for_paid_bill(client, app):
+    _login(client)
+    bill_id, reminder_id = _make_due_reminder(app, "STALE-PAID")
+    with app.app_context():
+        bill = db.session.get(PendingBill, bill_id)
+        bill.is_paid = True
+        db.session.commit()
+
+    response = client.get("/api/notifications/due")
+
+    assert response.status_code == 200
+    assert all(item["id"] != reminder_id for item in response.json)
+    with app.app_context():
+        reminder = db.session.get(FollowUpReminder, reminder_id)
+        assert reminder.alerted_at is None
+
+
+def test_paid_toggle_also_stops_future_notification(client, app):
+    _login(client)
+    bill_id, reminder_id = _make_due_reminder(app, "PAID-TOGGLE")
+
+    response = client.post(f"/toggle_bill_paid/{bill_id}")
+
+    assert response.status_code == 200
+    assert response.json == {"success": True, "is_paid": True}
+    with app.app_context():
+        bill = db.session.get(PendingBill, bill_id)
+        reminder = db.session.get(FollowUpReminder, reminder_id)
+        contact = FollowUpContact.query.filter_by(reminder_id=reminder_id).one()
+        assert bill.is_paid is True
+        assert reminder.is_done is True
+        assert contact.outcome == "paid"
+        assert contact.response == "Payment received before follow-up call"

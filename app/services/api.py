@@ -192,6 +192,7 @@ from app.services.lookups import (  # noqa: F401
 )
 from app.services.notify import (  # noqa: F401
     _build_notification_rows,
+    _mark_pending_bill_paid_and_stop_reminders,
     _resolve_reminder_with_contact,
 )
 from app.services.permissions import (  # noqa: F401
@@ -494,6 +495,7 @@ __all__ = [
     'get_supplier_by_input',
     'resolve_transaction_material',
     '_build_notification_rows',
+    '_mark_pending_bill_paid_and_stop_reminders',
     '_resolve_reminder_with_contact',
     '_can_manage_categories',
     '_permissions_from_request_form',
