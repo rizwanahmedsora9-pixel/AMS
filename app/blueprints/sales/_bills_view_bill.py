@@ -220,7 +220,7 @@ def view_bill(bill_no):
             entry = sale_entry_map.get(key, []).pop(0) if sale_entry_map.get(key) else None
             name = it.product_name
             if entry and entry.booked_material and entry.material and entry.booked_material.strip() != entry.material.strip():
-                name = f"{entry.booked_material.strip()} > ALT > {entry.material.strip()}"
+                name = format_alt_material_label(entry.booked_material, entry.material)
             bill_items.append({
                 'name': name,
                 'qty': it.qty,
@@ -280,7 +280,7 @@ def view_bill(bill_no):
             for e in invoice.entries:
                 name = (e.material or '').strip()
                 if e.booked_material and e.material and e.booked_material.strip() != e.material.strip():
-                    name = f"{e.booked_material.strip()} > ALT > {e.material.strip()}"
+                    name = format_alt_material_label(e.booked_material, e.material)
                 items.append({
                     'name': name,
                     'qty': e.qty,

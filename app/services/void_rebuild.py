@@ -1196,7 +1196,11 @@ def _void_direct_sale_entries_and_restore_stock(sale, refs=None, client_code=Non
         if e.is_void:
             continue
         e.is_void = True
-        stock_name = e.booked_material if (e.is_alternate and e.booked_material) else e.material
+        # Entry.material is always the physically delivered material (for
+        # alternate fulfilments it is the alternate, while booked_material
+        # only references the original booking).  Stock moves must mirror
+        # _rebuild_material_totals(), which aggregates Entry.material.
+        stock_name = e.material
         mat = Material.query.filter_by(name=stock_name).first()
         if mat:
             if e.type == 'OUT':
@@ -1217,7 +1221,8 @@ def _unvoid_direct_sale_entries_and_apply_stock(sale, refs=None, client_code=Non
     for e in entries:
         if not e.is_void:
             continue
-        stock_name = e.booked_material if (e.is_alternate and e.booked_material) else e.material
+        # Same rule as voiding above: stock follows the delivered material.
+        stock_name = e.material
         mat = Material.query.filter_by(name=stock_name).first()
         if mat:
             if e.type == 'OUT':

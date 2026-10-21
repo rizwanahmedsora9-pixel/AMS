@@ -49,6 +49,9 @@ from app.services import constants as C
 from app.services import state
 
 # === explicit service imports ===
+from app.services.sales_core import (
+    format_alt_material_label,
+)
 from app.services.time_money import (
     _parse_dt_safe,
     pk_now,
@@ -134,7 +137,7 @@ def _material_ledger_recent(client_obj, only_booking=True, limit_per_material=5,
         bill_ref = d.bill_no or d.auto_bill_no or ''
         material_display = mat
         if d.booked_material and d.material and d.booked_material != d.material:
-            material_display = f"{d.booked_material}>ALT>{d.material}"
+            material_display = format_alt_material_label(d.booked_material, d.material)
         events_by_material.setdefault(mat, []).append({
             'date_dt': dt_val,
             'date_str': d.date or '',

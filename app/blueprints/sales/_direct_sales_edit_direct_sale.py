@@ -331,15 +331,18 @@ def edit_direct_sale(id):
             if qty_sale > 0:
                 # For a pure booked (rate 0) row with no booking balance left
                 # there is nothing to charge.
+                # Any excess beyond the booking balance ships the DELIVERED
+                # material (the alternate, when one was supplied) and is
+                # priced from it — no originally-booked material leaves stock.
                 effective_rate = rate_val
                 if effective_rate <= 0:
-                    effective_rate = float(mat_obj.unit_price or 0)
+                    effective_rate = float((alt_obj or mat_obj).unit_price or 0)
                 parsed_items.append({
-                    'product_name': mat_obj.name,
+                    'product_name': delivered_name,
                     'booked_material': None,
                     'qty': qty_sale,
                     'price_at_time': effective_rate,
-                    'grn_item_id': grn_item_id,
+                    'grn_item_id': (None if alt_obj else grn_item_id),
                     'is_booking': False,
                     'is_alternate': False,
                 })
