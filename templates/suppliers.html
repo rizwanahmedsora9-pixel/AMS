@@ -1,219 +1,923 @@
 {% extends "layout.html" %}
 {% block content %}
-<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
-    <h2 class="fw-bold text-warning mb-0"><i class="bi bi-truck me-2"></i>Supplier Ledger</h2>
-    <div class="d-flex gap-2 flex-wrap">
-        <a href="/" class="btn btn-outline-light btn-sm fw-bold"><i class="bi bi-arrow-left me-1"></i> Back</a>
-        <a href="{{ url_for('pay_supplier_page') }}" class="btn btn-success btn-sm fw-bold">
-            <i class="bi bi-cash-stack me-1"></i> Pay Supplier
-        </a>
-        <button class="btn btn-warning btn-sm text-dark fw-bold" data-bs-toggle="modal" data-bs-target="#addSupplierModal">
-            <i class="bi bi-plus-lg"></i> Add Supplier
-        </button>
-    </div>
-</div>
+{% macro money(value) -%}{{ "{:,.2f}".format(value or 0) }}{%- endmacro %}
+{% macro sort_url(value) -%}
+{{ url_for('suppliers', q=(filters.q or None), status=(filters.status if filters.status != 'all' else None), balance_min=(filters.balance_min or None), balance_max=(filters.balance_max or None), sort=value) }}
+{%- endmacro %}
+<style>
+    .supplier-page {
+        --sp-panel: var(--surface-1);
+        --sp-head: var(--surface-2);
+        --sp-border: var(--border-color);
+        --sp-muted: var(--text-muted);
+    }
+    .supplier-page-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.9rem;
+        margin-bottom: 1rem;
+    }
+    .supplier-page-header .supplier-subtitle {
+        color: var(--sp-muted);
+        font-size: 0.82rem;
+        margin-top: 0.2rem;
+    }
+    .supplier-page-header .page-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
 
-<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
-    {% for s in suppliers %}
-    <div class="col">
-        <div class="card h-100 border-secondary bg-dark text-white shadow-sm" style="border-radius: 15px;">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <h5 class="card-title text-warning fw-bold mb-0 text-truncate" title="{{ s.name }}">{{ s.name }}</h5>
-                    <span class="badge {{ 'bg-success' if s.is_active else 'bg-secondary' }} rounded-pill">
-                        {{ 'Active' if s.is_active else 'Inactive' }}
-                    </span>
-                </div>
-                <p class="card-text text-white-50 small mb-3">
-                    <i class="bi bi-telephone me-2"></i>{{ s.phone or 'No Phone' }}<br>
-                    <i class="bi bi-geo-alt me-2"></i>{{ s.address or 'No Address' }}
-                </p>
-                {% set _cur_bal = supplier_balances.get(s.id, s.opening_balance or 0) %}
-                <div class="small fw-bold mb-1 text-white-50">
-                    <i class="bi bi-wallet2 me-1"></i>Opening: {{ "{:,.2f}".format(s.opening_balance or 0) }}
-                </div>
-                <div class="small fw-bold mb-3 {{ 'text-danger' if _cur_bal > 0.009 else ('text-success' if _cur_bal < -0.009 else 'text-white-50') }}">
-                    <i class="bi bi-cash-coin me-1"></i>Current Payable: <span class="fs-6">Rs {{ "{:,.2f}".format(_cur_bal) }}</span>
-                </div>
-                <div class="d-grid gap-2">
-                    <a href="{{ url_for('pay_supplier_page') }}" class="btn btn-success fw-bold">
-                        <i class="bi bi-cash-stack me-2"></i>Pay Supplier
-                    </a>
-                    <a href="{{ url_for('supplier_ledger', id=s.id) }}" class="btn btn-info fw-bold">
-                        <i class="bi bi-journal-text me-2"></i>View Ledger
-                    </a>
-                    {% if s.transferred_to_id %}
-                    <a href="{{ url_for('supplier_ledger_shift_page', id=s.id) }}" class="btn btn-outline-info fw-bold">
-                        <i class="bi bi-arrow-left-right me-1"></i>Shift / Reclaim this ledger
-                    </a>
-                    <form action="{{ url_for('reclaim_supplier_ledger', id=s.id) }}" method="POST" class="d-grid" onsubmit="return confirm('Move this supplier\'s ledger back from the supplier it was shifted to?');">
-                        <button type="submit" class="btn btn-outline-success fw-bold">
-                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reclaim shifted ledger
-                        </button>
-                    </form>
-                    {% endif %}
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-outline-warning flex-grow-1" data-bs-toggle="modal" data-bs-target="#editSupplierModal{{ s.id }}">
-                            <i class="bi bi-pencil"></i> Edit
-                        </button>
-                        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteSupplierModal{{ s.id }}" title="Delete / Archive Supplier">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                </div>
+    /* Aggregate strip — one surface, not a collection of supplier cards. */
+    .supplier-summary {
+        display: grid;
+        grid-template-columns: 1.25fr repeat(4, minmax(0, 1fr));
+        border: 1px solid var(--sp-border);
+        border-radius: 12px;
+        background: var(--sp-panel);
+        overflow: hidden;
+        margin-bottom: 1rem;
+    }
+    .supplier-summary .summary-item {
+        min-width: 0;
+        padding: 0.7rem 0.9rem;
+        border-left: 1px solid var(--sp-border);
+    }
+    .supplier-summary .summary-item:first-child { border-left: 0; }
+    .supplier-summary .summary-label {
+        display: block;
+        color: var(--sp-muted);
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .supplier-summary .summary-value {
+        display: block;
+        margin-top: 0.15rem;
+        color: var(--text-primary);
+        font-size: 1.02rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .supplier-summary .summary-value small {
+        color: var(--sp-muted);
+        font-size: 0.72rem;
+        font-weight: 600;
+    }
+    .supplier-summary .summary-note {
+        display: block;
+        color: var(--sp-muted);
+        font-size: 0.68rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .supplier-summary .summary-value.text-danger { color: #f87171 !important; }
+    .supplier-summary .summary-value.text-success { color: #4ade80 !important; }
+    html[data-theme="light"] .supplier-summary .summary-value.text-danger { color: #b91c1c !important; }
+    html[data-theme="light"] .supplier-summary .summary-value.text-success { color: #047857 !important; }
+
+    /* Filters */
+    .supplier-filters {
+        display: grid;
+        grid-template-columns: minmax(230px, 1.6fr) minmax(150px, 0.95fr) minmax(105px, 0.65fr) minmax(105px, 0.65fr) minmax(175px, 1fr) auto;
+        gap: 0.65rem;
+        align-items: end;
+        padding: 0.75rem;
+        border: 1px solid var(--sp-border);
+        border-radius: 12px;
+        background: var(--sp-panel);
+        margin-bottom: 1rem;
+    }
+    .supplier-filters .filter-field { min-width: 0; }
+    .supplier-filters label {
+        display: block;
+        color: var(--sp-muted);
+        font-size: 0.67rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        margin-bottom: 0.25rem;
+    }
+    .supplier-filters .form-control,
+    .supplier-filters .form-select {
+        min-height: 34px;
+        padding-top: 0.28rem;
+        padding-bottom: 0.28rem;
+        font-size: 0.84rem;
+    }
+    .supplier-filters .search-control { position: relative; }
+    .supplier-filters .search-control > i {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--sp-muted);
+        font-size: 0.8rem;
+        pointer-events: none;
+    }
+    .supplier-filters .search-control input { padding-left: 31px; }
+    .supplier-filters .filter-actions {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+    }
+    .supplier-filters .filter-actions .btn { white-space: nowrap; }
+
+    .supplier-list-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0 0 0.5rem;
+        color: var(--sp-muted);
+        font-size: 0.76rem;
+    }
+    .supplier-list-meta .meta-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 1px 7px;
+        border: 1px solid var(--sp-border);
+        border-radius: 999px;
+        background: var(--sp-panel);
+        color: var(--text-primary);
+        font-size: 0.7rem;
+    }
+
+    /* The list itself */
+    .supplier-list-panel {
+        border: 1px solid var(--sp-border);
+        border-radius: 12px;
+        background: var(--sp-panel);
+        overflow: hidden;
+    }
+    .supplier-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .supplier-table {
+        width: 100%;
+        margin: 0;
+        border-collapse: separate;
+        border-spacing: 0;
+        color: var(--text-primary);
+        font-size: 0.86rem;
+    }
+    .supplier-table thead th {
+        padding: 0.58rem 0.7rem;
+        background: var(--sp-head);
+        border-bottom: 1px solid var(--sp-border);
+        color: var(--sp-muted);
+        font-size: 0.67rem;
+        font-weight: 700;
+        letter-spacing: 0.045em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    .supplier-table tbody td {
+        padding: 0.56rem 0.7rem;
+        border-bottom: 1px solid var(--sp-border);
+        background: transparent;
+        vertical-align: middle;
+    }
+    .supplier-table tbody tr:last-child td { border-bottom: 0; }
+    .supplier-table tbody tr:hover td { background: var(--accent-soft); }
+    .supplier-table tfoot td {
+        padding: 0.55rem 0.7rem;
+        background: var(--sp-head);
+        border-top: 1px solid var(--sp-border);
+        font-size: 0.78rem;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .supplier-table .col-name { width: 23%; min-width: 195px; }
+    .supplier-table .col-code { width: 92px; white-space: nowrap; }
+    .supplier-table .col-phone { width: 126px; white-space: nowrap; }
+    .supplier-table .col-money { width: 108px; white-space: nowrap; }
+    .supplier-table .col-balance { width: 138px; white-space: nowrap; }
+    .supplier-table .col-status { width: 102px; white-space: nowrap; }
+    .supplier-table .col-actions { width: 242px; white-space: nowrap; text-align: right; }
+    .supplier-table .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .supplier-table .sort-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        color: inherit;
+        text-decoration: none;
+    }
+    .supplier-table .sort-link:hover,
+    .supplier-table .sort-link.is-active { color: var(--accent); }
+    .supplier-table .sort-link .bi { font-size: 0.72rem; }
+
+    .supplier-name-line {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        min-width: 0;
+    }
+    .supplier-name-link {
+        color: var(--text-primary);
+        font-weight: 700;
+        text-decoration: none;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+    }
+    .supplier-name-link:hover { color: var(--accent); }
+    .supplier-address {
+        color: var(--sp-muted);
+        font-size: 0.72rem;
+        line-height: 1.25;
+        margin-top: 0.1rem;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .supplier-code {
+        display: inline-block;
+        padding: 1px 6px;
+        border: 1px solid var(--sp-border);
+        border-radius: 6px;
+        background: var(--sp-head);
+        color: var(--sp-muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.015em;
+    }
+    .supplier-phone { color: var(--text-primary); text-decoration: none; font-size: 0.82rem; }
+    .supplier-phone:hover { color: var(--accent); text-decoration: underline; }
+    .muted-dash { color: var(--sp-muted); }
+    .cell-sub {
+        display: block;
+        margin-top: 1px;
+        color: var(--sp-muted);
+        font-size: 0.65rem;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+    .amount-due { color: #f87171; font-weight: 700; }
+    .amount-advance { color: #4ade80; font-weight: 700; }
+    .amount-zero { color: var(--sp-muted); font-weight: 500; }
+    html[data-theme="light"] .amount-due { color: #b91c1c; }
+    html[data-theme="light"] .amount-advance { color: #047857; }
+
+    .status-pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        font-size: 0.67rem;
+        font-weight: 700;
+        line-height: 1.5;
+        white-space: nowrap;
+    }
+    .status-payable { color: #fca5a5; background: rgba(239, 68, 68, 0.13); border-color: rgba(239, 68, 68, 0.32); }
+    .status-settled { color: #86efac; background: rgba(34, 197, 94, 0.13); border-color: rgba(34, 197, 94, 0.32); }
+    .status-advance { color: #93c5fd; background: rgba(59, 130, 246, 0.13); border-color: rgba(59, 130, 246, 0.32); }
+    html[data-theme="light"] .status-payable { color: #b91c1c; background: #fee2e2; border-color: #fecaca; }
+    html[data-theme="light"] .status-settled { color: #047857; background: #d1fae5; border-color: #a7f3d0; }
+    html[data-theme="light"] .status-advance { color: #1d4ed8; background: #dbeafe; border-color: #bfdbfe; }
+
+    .mini-tag {
+        display: inline-block;
+        padding: 1px 6px;
+        border: 1px solid var(--sp-border);
+        border-radius: 999px;
+        background: var(--sp-head);
+        color: var(--sp-muted);
+        font-size: 0.61rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+    .mini-tag-shifted { color: #93c5fd; border-color: rgba(59, 130, 246, 0.32); background: rgba(59, 130, 246, 0.13); }
+    html[data-theme="light"] .mini-tag-shifted { color: #1d4ed8; background: #dbeafe; border-color: #bfdbfe; }
+
+    .supplier-row-inactive .supplier-name-link,
+    .supplier-row-inactive .supplier-phone { color: var(--sp-muted); }
+    .supplier-row-inactive { opacity: 0.88; }
+
+    .row-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        flex-wrap: nowrap;
+    }
+    /* Higher specificity than the global .btn rules in theme.css so the
+       action buttons stay compact inside a dense list row. */
+    .supplier-page .supplier-table .row-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-height: 32px !important;
+        height: 32px;
+        padding: 0.15rem 0.55rem !important;
+        border-radius: 7px;
+        font-size: 0.73rem;
+        font-weight: 700;
+        line-height: 1.1;
+        white-space: nowrap !important;
+    }
+    .supplier-page .supplier-table .row-actions .btn.row-action-icon {
+        width: 32px;
+        min-width: 32px;
+        padding: 0 !important;
+        font-size: 0.82rem;
+    }
+    .supplier-page .supplier-table .row-actions .row-action-main { min-width: 104px; }
+
+    .supplier-empty {
+        padding: 2.6rem 1rem !important;
+        text-align: center;
+        color: var(--sp-muted);
+    }
+    .supplier-empty .empty-icon { display: block; font-size: 1.6rem; color: var(--accent); margin-bottom: 0.35rem; }
+    .supplier-empty .empty-title { color: var(--text-primary); font-weight: 700; margin-bottom: 0.2rem; }
+    .supplier-empty .empty-text { font-size: 0.78rem; margin-bottom: 0.7rem; }
+
+    /* Modal option panels (deliberately not supplier cards). */
+    .manage-option {
+        padding: 0.85rem;
+        margin-bottom: 0.7rem;
+        border: 1px solid var(--sp-border);
+        border-radius: 10px;
+        background: var(--sp-head);
+    }
+    .manage-option:last-child { margin-bottom: 0; }
+    .manage-option h6 { margin: 0 0 0.2rem; font-weight: 700; }
+    .manage-option p { color: var(--sp-muted); font-size: 0.74rem; margin: 0 0 0.55rem; }
+    .manage-option .x-small { font-size: 0.7rem; }
+    .manage-option.option-info { border-color: rgba(59, 130, 246, 0.35); }
+    .manage-option.option-danger { border-color: rgba(239, 68, 68, 0.35); }
+    .manage-option .option-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+    /* Tablet: aligned columns remain readable; the wrapper scrolls sideways. */
+    @media (min-width: 768px) and (max-width: 1399.98px) {
+        .supplier-table { min-width: 1110px; }
+        .supplier-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .supplier-filters .filter-search { grid-column: span 2; }
+        .supplier-filters .filter-actions { justify-content: flex-end; }
+        .supplier-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .supplier-summary .summary-item:nth-child(4) { border-left: 0; }
+        .supplier-summary .summary-item:nth-child(n + 4) { border-top: 1px solid var(--sp-border); }
+    }
+
+    /* Mobile: each supplier becomes one compact two-column list row. */
+    @media (max-width: 767.98px) {
+        .supplier-page-header { align-items: flex-start; }
+        .supplier-page-header .page-actions { width: 100%; }
+        .supplier-page-header .page-actions .btn { flex: 1 1 auto; }
+        .supplier-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .supplier-summary .summary-item { border-top: 1px solid var(--sp-border); }
+        .supplier-summary .summary-item:nth-child(1),
+        .supplier-summary .summary-item:nth-child(2) { border-top: 0; }
+        .supplier-summary .summary-item:nth-child(odd) { border-left: 0; }
+        .supplier-summary .summary-item:last-child { grid-column: 1 / -1; border-left: 0; }
+        .supplier-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0.65rem; }
+        .supplier-filters .filter-search,
+        .supplier-filters .filter-actions { grid-column: 1 / -1; }
+        .supplier-filters .filter-actions .btn { flex: 1 1 0; }
+
+        .supplier-table-scroll { overflow-x: visible; }
+        .supplier-table { display: block; min-width: 0; font-size: 0.88rem; }
+        .supplier-table thead { display: none; }
+        .supplier-table tbody,
+        .supplier-table tfoot { display: block; }
+        .supplier-table tbody tr {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.45rem 0.9rem;
+            padding: 0.72rem 0.8rem;
+            border-bottom: 1px solid var(--sp-border);
+        }
+        .supplier-table tbody tr:last-child { border-bottom: 0; }
+        .supplier-table tbody tr.supplier-empty-row { display: block; padding: 0; }
+        .supplier-table tbody tr:hover { background: var(--accent-soft); }
+        .supplier-table tbody tr:hover td { background: transparent; }
+        .supplier-table tbody td {
+            display: block;
+            width: auto !important;
+            min-width: 0 !important;
+            padding: 0;
+            border: 0;
+            text-align: left;
+            white-space: normal;
+            background: transparent;
+        }
+        .supplier-table tbody td::before {
+            content: attr(data-label);
+            display: block;
+            margin-bottom: 1px;
+            color: var(--sp-muted);
+            font-size: 0.61rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+        .supplier-table tbody td.col-name { grid-column: 1 / -1; }
+        .supplier-table tbody td.col-name::before,
+        .supplier-table tbody td.col-actions::before { display: none; }
+        .supplier-table tbody td.col-actions {
+            grid-column: 1 / -1;
+            margin-top: 0.15rem;
+        }
+        .supplier-table tbody td.col-status { grid-column: 1 / -1; }
+        .supplier-table tbody td.num { text-align: left; }
+        .supplier-table .supplier-address { max-width: none; white-space: normal; }
+        .supplier-table tfoot { display: none; }
+        .row-actions { justify-content: flex-start; flex-wrap: wrap; }
+        .row-actions .row-action-main { flex: 1 1 auto; }
+        .supplier-empty { padding: 2rem 0.75rem !important; }
+        .supplier-empty::before { display: none !important; }
+    }
+
+    @media (max-width: 420px) {
+        .supplier-filters { grid-template-columns: minmax(0, 1fr); }
+        .supplier-filters .filter-search,
+        .supplier-filters .filter-actions { grid-column: 1 / -1; }
+        .supplier-summary { grid-template-columns: minmax(0, 1fr); }
+        .supplier-summary .summary-item { border-left: 0; }
+        .supplier-summary .summary-item:nth-child(2) { border-top: 1px solid var(--sp-border); }
+        .supplier-summary .summary-item:last-child { grid-column: auto; }
+    }
+</style>
+
+<div class="supplier-page">
+    <div class="supplier-page-header">
+        <div>
+            <h2 class="fw-bold text-warning mb-0"><i class="bi bi-truck me-2"></i>Supplier Ledger</h2>
+            <div class="supplier-subtitle">
+                Every supplier account on one list — purchases, payments, outstanding payables and advances.
             </div>
         </div>
-    </div>
-    
-    <!-- Edit Supplier Modal -->
-    <div class="modal fade" id="editSupplierModal{{ s.id }}" tabindex="-1">
-        <div class="modal-dialog">
-            <form action="{{ url_for('edit_supplier', id=s.id) }}" method="POST" class="modal-content bg-dark text-white border-secondary">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title text-warning">Edit Supplier</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Name</label>
-                        <input type="text" name="name" class="form-control bg-dark text-white border-secondary" value="{{ s.name }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Phone</label>
-                        <input type="text" name="phone" class="form-control bg-dark text-white border-secondary" value="{{ s.phone or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Address</label>
-                        <textarea name="address" class="form-control bg-dark text-white border-secondary" rows="2">{{ s.address or '' }}</textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Opening Balance</label>
-                        <input type="number" step="0.01" name="opening_balance" class="form-control bg-dark text-white border-secondary" value="{{ '%.2f'|format(s.opening_balance or 0) }}">
-                        <small class="text-white-50">Use + for payable due, - for advance/prepaid.</small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Opening Balance Date</label>
-                        <input type="date" name="opening_balance_date" class="form-control bg-dark text-white border-secondary" value="{{ (s.opening_balance_date or s.created_at).strftime('%Y-%m-%d') if (s.opening_balance_date or s.created_at) else '' }}">
-                    </div>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" name="is_active" id="isActive{{ s.id }}" {{ 'checked' if s.is_active else '' }}>
-                        <label class="form-check-label" for="isActive{{ s.id }}">Active</label>
-                    </div>
-                </div>
-                <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-warning text-dark fw-bold">Update</button>
-                </div>
-            </form>
+        <div class="page-actions">
+            <a href="/" class="btn btn-outline-light btn-sm fw-bold"><i class="bi bi-arrow-left me-1"></i> Back</a>
+            <a href="{{ url_for('pay_supplier_page') }}" class="btn btn-success btn-sm fw-bold">
+                <i class="bi bi-cash-stack me-1"></i> Pay Supplier
+            </a>
+            <button class="btn btn-warning btn-sm text-dark fw-bold" data-bs-toggle="modal" data-bs-target="#addSupplierModal">
+                <i class="bi bi-plus-lg"></i> Add Supplier
+            </button>
         </div>
     </div>
 
-    <!-- Delete / Archive Supplier Modal -->
-    <div class="modal fade" id="deleteSupplierModal{{ s.id }}" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content bg-dark text-white border-danger shadow-lg">
-                <div class="modal-header border-danger">
-                    <h5 class="modal-title text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Delete / Suspend: {{ s.name }}</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <p class="text-white-50 small mb-3">Choose whether you want to temporarily suspend this supplier or permanently delete them along with their wrong entries to restart fresh.</p>
+    <div class="supplier-summary" role="group" aria-label="Supplier ledger totals">
+        <div class="summary-item">
+            <span class="summary-label">Suppliers</span>
+            <span class="summary-value">
+                {{ summary.supplier_count }}{% if summary.supplier_count != summary.total_supplier_count %}<small> / {{ summary.total_supplier_count }}</small>{% endif %}
+            </span>
+            <span class="summary-note">
+                {{ summary.payable_count }} payable · {{ summary.settled_count }} settled{% if summary.advance_count %} · {{ summary.advance_count }} advance{% endif %}
+            </span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-label">Total Purchase</span>
+            <span class="summary-value">Rs {{ money(summary.total_purchase) }}</span>
+            <span class="summary-note">Goods received</span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-label">Total Paid</span>
+            <span class="summary-value">Rs {{ money(summary.total_paid) }}</span>
+            <span class="summary-note">Payments recorded</span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-label">Outstanding Payable</span>
+            <span class="summary-value text-danger">Rs {{ money(summary.total_outstanding) }}</span>
+            <span class="summary-note">{{ summary.payable_count }} supplier{{ '' if summary.payable_count == 1 else 's' }}</span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-label">Advance Balance</span>
+            <span class="summary-value text-success">Rs {{ money(summary.total_advance) }}</span>
+            <span class="summary-note">Prepaid to suppliers</span>
+        </div>
+    </div>
 
-                    <!-- Option 1: Suspend / Archive -->
-                    <div class="card bg-secondary bg-opacity-25 border-secondary p-3 mb-3">
-                        <h6 class="text-warning fw-bold mb-1"><i class="bi bi-archive me-1"></i> Option 1: Suspend / Archive (Safe)</h6>
-                        <p class="text-white-50 x-small mb-2">Marks the supplier as inactive. All historical GRNs, payments, and ledger balances are preserved.</p>
-                        <form action="{{ url_for('delete_supplier', id=s.id) }}" method="POST">
-                            <input type="hidden" name="action" value="archive">
-                            <button type="submit" class="btn btn-outline-warning btn-sm fw-bold">
-                                <i class="bi bi-pause-circle me-1"></i> Suspend Supplier
-                            </button>
-                        </form>
-                    </div>
+    <form class="supplier-filters" method="GET" action="{{ url_for('suppliers') }}">
+        <div class="filter-field filter-search">
+            <label for="supplierSearch">Search supplier</label>
+            <div class="search-control">
+                <i class="bi bi-search"></i>
+                <input id="supplierSearch" type="search" name="q" value="{{ filters.q }}"
+                       class="form-control" autocomplete="off"
+                       placeholder="Name, phone or code (e.g. SUP-0007)">
+            </div>
+        </div>
+        <div class="filter-field">
+            <label for="supplierStatus">Payment status</label>
+            <select id="supplierStatus" name="status" class="form-select" onchange="this.form.submit()">
+                {% for value, label in status_choices %}
+                <option value="{{ value }}" {{ 'selected' if filters.status == value }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-field">
+            <label for="supplierBalanceMin">Balance ≥</label>
+            <input id="supplierBalanceMin" type="number" step="0.01" inputmode="decimal"
+                   name="balance_min" value="{{ filters.balance_min }}"
+                   class="form-control" placeholder="Any"
+                   title="Positive values mean payable; negative values mean advance.">
+        </div>
+        <div class="filter-field">
+            <label for="supplierBalanceMax">Balance ≤</label>
+            <input id="supplierBalanceMax" type="number" step="0.01" inputmode="decimal"
+                   name="balance_max" value="{{ filters.balance_max }}"
+                   class="form-control" placeholder="Any"
+                   title="Positive values mean payable; negative values mean advance.">
+        </div>
+        <div class="filter-field">
+            <label for="supplierSort">Sort by</label>
+            <select id="supplierSort" name="sort" class="form-select" onchange="this.form.submit()">
+                {% for value, label in sort_choices %}
+                <option value="{{ value }}" {{ 'selected' if active_sort == value }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-actions">
+            <button type="submit" class="btn btn-warning btn-sm fw-bold"><i class="bi bi-funnel"></i> Apply</button>
+            {% if filters_active %}
+            <a href="{{ url_for('suppliers') }}" class="btn btn-outline-secondary btn-sm fw-bold">Reset</a>
+            {% endif %}
+        </div>
+    </form>
 
-                    <!-- Option 1b: Transfer to correct supplier (preserves inventory/sales) -->
-                    <div class="card bg-info bg-opacity-10 border-info p-3 mb-3">
-                        <h6 class="text-info fw-bold mb-1"><i class="bi bi-arrow-right-circle me-1"></i> Option 1b: Transfer Data to Correct Supplier</h6>
-                        <p class="text-white-50 x-small mb-2">Moves all GRNs, payments and stock entries from this supplier to the correct supplier. Inventory totals and already-recorded customer sales are preserved; only supplier attribution/ledger ownership changes.</p>
-                        <form action="{{ url_for('transfer_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('Transfer all data from this supplier to the selected supplier?');">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                            <select name="target_supplier_id" class="form-select form-select-sm bg-dark text-white border-secondary mb-2" required>
-                                <option value="">-- Select correct supplier --</option>
-                                {% for ts in suppliers if ts.id != s.id and ts.is_active %}
-                                <option value="{{ ts.id }}">{{ ts.name }}</option>
-                                {% endfor %}
-                            </select>
-                            <button type="submit" class="btn btn-info btn-sm fw-bold text-dark">
-                                <i class="bi bi-arrow-right-circle me-1"></i> Transfer Data
-                            </button>
-                        </form>
-                    </div>
+    <div class="supplier-list-meta">
+        <span>
+            <i class="bi bi-list-ul me-1"></i>
+            Showing <strong>{{ matched_count }}</strong> of {{ total_count }} supplier{{ '' if total_count == 1 else 's' }}
+        </span>
+        {% if filters.q %}
+        <span class="meta-chip"><i class="bi bi-search"></i> {{ filters.q }}</span>
+        {% endif %}
+        {% if filters.status != 'all' %}
+        <span class="meta-chip">
+            {% for value, label in status_choices %}{% if filters.status == value %}{{ label }}{% endif %}{% endfor %}
+        </span>
+        {% endif %}
+        {% if filters.balance_min or filters.balance_max %}
+        <span class="meta-chip">Balance {{ filters.balance_min or '−∞' }} to {{ filters.balance_max or '∞' }}</span>
+        {% endif %}
+    </div>
 
-                    <!-- Option 1c: Shift the whole ledger (clean move) -->
-                    <div class="card bg-primary bg-opacity-10 border-primary p-3 mb-3">
-                        <h6 class="text-primary fw-bold mb-1"><i class="bi bi-arrow-left-right me-1"></i> Option 1c: Shift Entire Ledger (Clean)</h6>
-                        <p class="text-white-50 x-small mb-2">Moves <strong>everything</strong> — all GRNs, every payment (active + voided), the opening balance, legacy stock rows, linked accounts and manual cash-flow entries — to the receiving supplier, and updates the Accounts section so cash/bank, payables and cash-flow stay in step. The old ledger becomes empty and the supplier can then be deleted cleanly.</p>
-                        <a href="{{ url_for('supplier_ledger_shift_page', id=s.id) }}" class="btn btn-primary btn-sm fw-bold">
-                            <i class="bi bi-arrow-left-right me-1"></i> Shift Entire Ledger…
-                        </a>
-                    </div>
-
-                    <!-- Option 2: Hard Delete & Wipe -->
-                    <div class="card bg-danger bg-opacity-10 border-danger p-3">
-                        <h6 class="text-danger fw-bold mb-1"><i class="bi bi-trash3-fill me-1"></i> Option 2: Hard Delete (Start Fresh)</h6>
-                        <p class="text-white-50 x-small mb-2">Permanently deletes this supplier and completely purges all associated wrong entries (GRNs, payments, and stock additions) so you can enter this supplier's data again from start.</p>
-                        <form action="{{ url_for('hard_delete_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('PERMANENT DELETION WARNING:\n\nAre you sure you want to permanently delete supplier \'{{ s.name }}\' and wipe all their entries?\n\nThis will reverse all payments and GRNs for this supplier so you can start fresh. This cannot be undone.');">
-                            <input type="hidden" name="action" value="hard_delete">
-                            <div class="form-check small mb-2">
-                                <input class="form-check-input" type="checkbox" id="confirmHardDelete{{ s.id }}" required>
-                                <label class="form-check-label text-white-50" for="confirmHardDelete{{ s.id }}">
-                                    I confirm I want to permanently delete this supplier and start fresh.
-                                </label>
+    <div class="supplier-list-panel">
+        <div class="supplier-table-scroll">
+            <table class="supplier-table" aria-label="Supplier ledger list">
+                <caption class="visually-hidden">
+                    Supplier ledger: supplier name, code, phone, purchases, payments,
+                    outstanding payable, advance balance, payment status and actions.
+                </caption>
+                <thead>
+                    <tr>
+                        <th scope="col" class="col-name" aria-sort="{{ 'ascending' if active_sort == 'name_asc' else ('descending' if active_sort == 'name_desc' else 'none') }}">
+                            <a class="sort-link {{ 'is-active' if active_sort in ('name_asc', 'name_desc') }}"
+                               href="{{ sort_url('name_asc' if active_sort == 'name_desc' else 'name_desc') }}"
+                               title="Sort by supplier name">
+                                Supplier Name
+                                {% if active_sort == 'name_asc' %}<i class="bi bi-sort-alpha-down"></i>
+                                {% elif active_sort == 'name_desc' %}<i class="bi bi-sort-alpha-up"></i>
+                                {% else %}<i class="bi bi-arrow-down-up"></i>{% endif %}
+                            </a>
+                        </th>
+                        <th scope="col" class="col-code">Supplier Code</th>
+                        <th scope="col" class="col-phone">Phone Number</th>
+                        <th scope="col" class="col-money num" aria-sort="{{ 'descending' if active_sort == 'purchase_desc' else ('ascending' if active_sort == 'purchase_asc' else 'none') }}">
+                            <a class="sort-link {{ 'is-active' if active_sort in ('purchase_desc', 'purchase_asc') }}"
+                               href="{{ sort_url('purchase_asc' if active_sort == 'purchase_desc' else 'purchase_desc') }}"
+                               title="Sort by total purchase">
+                                Total Purchase
+                                {% if active_sort == 'purchase_desc' %}<i class="bi bi-sort-numeric-down"></i>
+                                {% elif active_sort == 'purchase_asc' %}<i class="bi bi-sort-numeric-up"></i>
+                                {% else %}<i class="bi bi-arrow-down-up"></i>{% endif %}
+                            </a>
+                        </th>
+                        <th scope="col" class="col-money num">Total Paid</th>
+                        <th scope="col" class="col-balance num" aria-sort="{{ 'descending' if active_sort == 'balance_desc' else ('ascending' if active_sort == 'balance_asc' else 'none') }}">
+                            <a class="sort-link {{ 'is-active' if active_sort in ('balance_desc', 'balance_asc') }}"
+                               href="{{ sort_url('balance_asc' if active_sort == 'balance_desc' else 'balance_desc') }}"
+                               title="Sort by payable balance">
+                                Outstanding Payable
+                                {% if active_sort == 'balance_desc' %}<i class="bi bi-sort-numeric-down"></i>
+                                {% elif active_sort == 'balance_asc' %}<i class="bi bi-sort-numeric-up"></i>
+                                {% else %}<i class="bi bi-arrow-down-up"></i>{% endif %}
+                            </a>
+                        </th>
+                        <th scope="col" class="col-balance num">Advance Balance</th>
+                        <th scope="col" class="col-status">Payment Status</th>
+                        <th scope="col" class="col-actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in supplier_rows %}
+                    <tr class="{{ 'supplier-row-inactive' if not row.is_active else '' }}">
+                        <td class="col-name" data-label="Supplier Name">
+                            <div class="supplier-name-line">
+                                <a href="{{ url_for('supplier_ledger', id=row.id) }}"
+                                   class="supplier-name-link"
+                                   title="Open the complete ledger for {{ row.name }}">{{ row.name or 'Unnamed supplier' }}</a>
+                                {% if not row.is_active %}<span class="mini-tag">Inactive</span>{% endif %}
+                                {% if row.transferred_to_id %}<span class="mini-tag mini-tag-shifted" title="Ledger shifted to another supplier">Shifted</span>{% endif %}
                             </div>
-                            <button type="submit" class="btn btn-danger btn-sm fw-bold">
-                                <i class="bi bi-trash me-1"></i> Permanently Delete &amp; Wipe Entries
+                            {% if row.address %}
+                            <div class="supplier-address" title="{{ row.address }}">{{ row.address }}</div>
+                            {% endif %}
+                        </td>
+                        <td class="col-code" data-label="Supplier Code">
+                            <span class="supplier-code" title="Supplier ID #{{ row.id }}">{{ row.code }}</span>
+                        </td>
+                        <td class="col-phone" data-label="Phone">
+                            {% if row.phone %}
+                            <a class="supplier-phone" href="tel:{{ row.phone }}">{{ row.phone }}</a>
+                            {% else %}
+                            <span class="muted-dash">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-money num" data-label="Total Purchase">{{ money(row.total_purchase) }}</td>
+                        <td class="col-money num" data-label="Total Paid">
+                            {{ money(row.total_paid) }}
+                            {% if row.total_credit > 0.005 %}
+                            <span class="cell-sub" title="Supplier refunds / credits also reduce the payable">Credits {{ money(row.total_credit) }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-balance num" data-label="Outstanding Payable">
+                            <span class="{{ 'amount-due' if row.outstanding > 0.005 else 'amount-zero' }}">{{ money(row.outstanding) }}</span>
+                            {% if row.opening_balance > 0 %}
+                            <span class="cell-sub" title="Opening payable included in the ledger balance">Opening {{ money(row.opening_balance) }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-balance num" data-label="Advance Balance">
+                            {% if row.advance > 0.005 %}
+                            <span class="amount-advance">{{ money(row.advance) }}</span>
+                            {% else %}
+                            <span class="amount-zero">—</span>
+                            {% endif %}
+                            {% if row.opening_balance < 0 %}
+                            <span class="cell-sub" title="Opening advance included in the ledger balance">Opening advance {{ money(-row.opening_balance) }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-status" data-label="Payment Status">
+                            <span class="status-pill status-{{ row.status|lower }}">{{ row.status }}</span>
+                        </td>
+                        <td class="col-actions" data-label="Actions">
+                            <div class="row-actions">
+                                <a href="{{ url_for('supplier_ledger', id=row.id) }}"
+                                   class="btn btn-sm btn-outline-info row-action-main fw-bold"
+                                   title="View supplier ledger and complete transaction history">
+                                    <i class="bi bi-journal-text"></i><span>View Ledger</span>
+                                </a>
+                                <a href="{{ url_for('accounts.supplier_payments', party_id=row.id) }}"
+                                   class="btn btn-sm btn-outline-success row-action-icon"
+                                   title="Pay this supplier" aria-label="Pay {{ row.name }}">
+                                    <i class="bi bi-cash-stack"></i>
+                                </a>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-warning row-action-icon"
+                                        data-bs-toggle="modal" data-bs-target="#editSupplierModal{{ row.id }}"
+                                        title="Edit supplier" aria-label="Edit {{ row.name }}">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-danger row-action-icon"
+                                        data-bs-toggle="modal" data-bs-target="#deleteSupplierModal{{ row.id }}"
+                                        title="Archive, transfer or delete supplier" aria-label="Manage {{ row.name }}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr class="supplier-empty-row">
+                        <td colspan="9" class="supplier-empty">
+                            <i class="bi bi-inbox empty-icon"></i>
+                            <div class="empty-title">
+                                {% if total_count == 0 %}No suppliers yet{% else %}No suppliers match these filters{% endif %}
+                            </div>
+                            <div class="empty-text">
+                                {% if total_count == 0 %}
+                                Add your first supplier to begin tracking purchases and payments.
+                                {% else %}
+                                Try a different name, code or phone number, or clear the balance range.
+                                {% endif %}
+                            </div>
+                            {% if filters_active %}
+                            <a href="{{ url_for('suppliers') }}" class="btn btn-outline-warning btn-sm fw-bold">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i> Clear filters
+                            </a>
+                            {% else %}
+                            <button type="button" class="btn btn-warning btn-sm text-dark fw-bold"
+                                    data-bs-toggle="modal" data-bs-target="#addSupplierModal">
+                                <i class="bi bi-plus-lg me-1"></i> Add Supplier
                             </button>
-                        </form>
-                    </div>
-                </div>
-                <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-                </div>
-            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                {% if supplier_rows %}
+                <tfoot>
+                    <tr>
+                        <td colspan="3">Totals — {{ summary.supplier_count }} shown</td>
+                        <td class="num">{{ money(summary.total_purchase) }}</td>
+                        <td class="num">{{ money(summary.total_paid) }}</td>
+                        <td class="num amount-due">{{ money(summary.total_outstanding) }}</td>
+                        <td class="num amount-advance">{{ money(summary.total_advance) }}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
+                {% endif %}
+            </table>
         </div>
     </div>
-    {% endfor %}
-</div>
 
-<!-- Add Supplier Modal -->
-<div class="modal fade" id="addSupplierModal" tabindex="-1">
+{% for s in suppliers %}
+<!-- Edit Supplier Modal -->
+<div class="modal fade" id="editSupplierModal{{ s.id }}" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
-        <form action="{{ url_for('add_supplier') }}" method="POST" class="modal-content bg-dark text-white border-secondary">
+        <form action="{{ url_for('edit_supplier', id=s.id) }}" method="POST" class="modal-content bg-dark text-white border-secondary">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
             <div class="modal-header border-secondary">
-                <h5 class="modal-title text-warning">Add New Supplier</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                <h5 class="modal-title text-warning"><i class="bi bi-pencil-square me-1"></i>Edit Supplier</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="mb-3">
-                    <label class="form-label">Name</label>
-                    <input type="text" name="name" class="form-control bg-dark text-white border-secondary" required>
+                    <label class="form-label" for="editSupplierName{{ s.id }}">Name</label>
+                    <input id="editSupplierName{{ s.id }}" type="text" name="name" class="form-control bg-dark text-white border-secondary" value="{{ s.name }}" required>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Phone</label>
-                    <input type="text" name="phone" class="form-control bg-dark text-white border-secondary">
+                    <label class="form-label" for="editSupplierPhone{{ s.id }}">Phone</label>
+                    <input id="editSupplierPhone{{ s.id }}" type="text" name="phone" class="form-control bg-dark text-white border-secondary" value="{{ s.phone or '' }}">
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Address</label>
-                    <textarea name="address" class="form-control bg-dark text-white border-secondary" rows="2"></textarea>
+                    <label class="form-label" for="editSupplierAddress{{ s.id }}">Address</label>
+                    <textarea id="editSupplierAddress{{ s.id }}" name="address" class="form-control bg-dark text-white border-secondary" rows="2">{{ s.address or '' }}</textarea>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Opening Balance</label>
-                    <input type="number" step="0.01" name="opening_balance" class="form-control bg-dark text-white border-secondary" value="0">
+                    <label class="form-label" for="editSupplierOpening{{ s.id }}">Opening Balance</label>
+                    <input id="editSupplierOpening{{ s.id }}" type="number" step="0.01" name="opening_balance" class="form-control bg-dark text-white border-secondary" value="{{ '%.2f'|format(s.opening_balance or 0) }}">
                     <small class="text-white-50">Use + for payable due, - for advance/prepaid.</small>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Opening Balance Date</label>
-                    <input type="date" name="opening_balance_date" class="form-control bg-dark text-white border-secondary" value="">
+                    <label class="form-label" for="editSupplierOpeningDate{{ s.id }}">Opening Balance Date</label>
+                    <input id="editSupplierOpeningDate{{ s.id }}" type="date" name="opening_balance_date" class="form-control bg-dark text-white border-secondary" value="{{ (s.opening_balance_date or s.created_at).strftime('%Y-%m-%d') if (s.opening_balance_date or s.created_at) else '' }}">
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="is_active" id="isActive{{ s.id }}" {{ 'checked' if s.is_active else '' }}>
+                    <label class="form-check-label" for="isActive{{ s.id }}">Active</label>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" class="btn btn-warning text-dark fw-bold">Update</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Manage / Archive / Transfer Supplier Modal -->
+<div class="modal fade" id="deleteSupplierModal{{ s.id }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark text-white border-danger shadow-lg">
+            <div class="modal-header border-danger">
+                <h5 class="modal-title text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Manage Supplier: {{ s.name }}</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-white-50 small mb-3">
+                    Choose whether to temporarily suspend this supplier, move their ledger to the correct supplier,
+                    or permanently delete them along with their wrong entries.
+                </p>
+
+                {% if s.transferred_to_id %}
+                <div class="manage-option option-info">
+                    <h6 class="text-info"><i class="bi bi-arrow-left-right me-1"></i> Shifted ledger</h6>
+                    <p>This supplier's ledger was shifted to another supplier. You can open the shift tools or reclaim the shifted ledger.</p>
+                    <div class="option-actions">
+                        <a href="{{ url_for('supplier_ledger_shift_page', id=s.id) }}" class="btn btn-outline-info btn-sm fw-bold">
+                            <i class="bi bi-arrow-left-right me-1"></i>Shift / Reclaim this ledger
+                        </a>
+                        <form action="{{ url_for('reclaim_supplier_ledger', id=s.id) }}" method="POST" onsubmit="return confirm('Move this supplier\'s ledger back from the supplier it was shifted to?');">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-outline-success btn-sm fw-bold">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i>Reclaim shifted ledger
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="manage-option">
+                    <h6 class="text-warning"><i class="bi bi-archive me-1"></i> Option 1: Suspend / Archive (Safe)</h6>
+                    <p>Marks the supplier as inactive. All historical GRNs, payments and ledger balances are preserved.</p>
+                    <form action="{{ url_for('delete_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('Suspend this supplier? Historical ledger entries will be preserved.');">
+                        <input type="hidden" name="action" value="archive">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-outline-warning btn-sm fw-bold">
+                            <i class="bi bi-pause-circle me-1"></i> Suspend Supplier
+                        </button>
+                    </form>
+                </div>
+
+                <div class="manage-option">
+                    <h6 class="text-info"><i class="bi bi-arrow-right-circle me-1"></i> Option 1b: Transfer Data to Correct Supplier</h6>
+                    <p>Moves all GRNs, payments and stock entries from this supplier to the correct supplier. Inventory totals and already-recorded customer sales are preserved; only supplier attribution changes.</p>
+                    <form action="{{ url_for('transfer_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('Transfer all data from this supplier to the selected supplier?');">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                        <select name="target_supplier_id" class="form-select form-select-sm bg-dark text-white border-secondary mb-2" required>
+                            <option value="">-- Select correct supplier --</option>
+                            {% for ts in suppliers if ts.id != s.id and ts.is_active %}
+                            <option value="{{ ts.id }}">{{ ts.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-info btn-sm fw-bold text-dark">
+                            <i class="bi bi-arrow-right-circle me-1"></i> Transfer Data
+                        </button>
+                    </form>
+                </div>
+
+                <div class="manage-option">
+                    <h6 class="text-primary"><i class="bi bi-arrow-left-right me-1"></i> Option 1c: Shift Entire Ledger (Clean)</h6>
+                    <p>
+                        Moves <strong>everything</strong> — all GRNs, every payment (active + voided), the opening balance,
+                        legacy stock rows, linked accounts and manual cash-flow entries — to the receiving supplier, and
+                        updates the Accounts section so cash/bank, payables and cash-flow stay in step. The old ledger
+                        becomes empty and the supplier can then be deleted cleanly.
+                    </p>
+                    <a href="{{ url_for('supplier_ledger_shift_page', id=s.id) }}" class="btn btn-primary btn-sm fw-bold">
+                        <i class="bi bi-arrow-left-right me-1"></i> Shift Entire Ledger…
+                    </a>
+                </div>
+
+                <div class="manage-option option-danger">
+                    <h6 class="text-danger"><i class="bi bi-trash3-fill me-1"></i> Option 2: Hard Delete (Start Fresh)</h6>
+                    <p>Permanently deletes this supplier and completely purges all associated entries (GRNs, payments and stock additions) so you can enter this supplier's data again from the start.</p>
+                    <form action="{{ url_for('hard_delete_supplier', id=s.id) }}" method="POST" onsubmit="return confirm('PERMANENT DELETION WARNING: permanently delete this supplier and wipe all their entries? This cannot be undone.');">
+                        <input type="hidden" name="action" value="hard_delete">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                        <div class="form-check small mb-2">
+                            <input class="form-check-input" type="checkbox" id="confirmHardDelete{{ s.id }}" required>
+                            <label class="form-check-label text-white-50" for="confirmHardDelete{{ s.id }}">
+                                I confirm I want to permanently delete this supplier and start fresh.
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-danger btn-sm fw-bold">
+                            <i class="bi bi-trash me-1"></i> Permanently Delete &amp; Wipe Entries
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Add Supplier Modal -->
+<div class="modal fade" id="addSupplierModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form action="{{ url_for('add_supplier') }}" method="POST" class="modal-content bg-dark text-white border-secondary">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title text-warning"><i class="bi bi-plus-circle me-1"></i>Add New Supplier</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label" for="addSupplierName">Name</label>
+                    <input id="addSupplierName" type="text" name="name" class="form-control bg-dark text-white border-secondary" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="addSupplierPhone">Phone</label>
+                    <input id="addSupplierPhone" type="text" name="phone" class="form-control bg-dark text-white border-secondary">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="addSupplierAddress">Address</label>
+                    <textarea id="addSupplierAddress" name="address" class="form-control bg-dark text-white border-secondary" rows="2"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="addSupplierOpening">Opening Balance</label>
+                    <input id="addSupplierOpening" type="number" step="0.01" name="opening_balance" class="form-control bg-dark text-white border-secondary" value="0">
+                    <small class="text-white-50">Use + for payable due, - for advance/prepaid.</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="addSupplierOpeningDate">Opening Balance Date</label>
+                    <input id="addSupplierOpeningDate" type="date" name="opening_balance_date" class="form-control bg-dark text-white border-secondary" value="">
                 </div>
             </div>
             <div class="modal-footer border-secondary">
@@ -222,5 +926,22 @@
             </div>
         </form>
     </div>
+</div>
+
+<script>
+    // Enter submits the search; selects submit immediately. No finance data is
+    // touched in the browser — this is only a GET filter form.
+    document.addEventListener('DOMContentLoaded', function () {
+        const search = document.getElementById('supplierSearch');
+        if (search) {
+            search.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    search.value = '';
+                    search.form.submit();
+                }
+            });
+        }
+    });
+</script>
 </div>
 {% endblock %}

@@ -1332,12 +1332,17 @@ def build_supplier_financial_ledger(supplier, **filters):
     return ledger
 
 
-def build_supplier_payable_summaries(suppliers=None):
-    """Return authoritative supplier balances with a bounded query count.
+def build_supplier_payable_overview(suppliers=None):
+    """Return supplier balances plus the totals they are derived from.
 
-    The projection retains the full supplier ledger's legacy-GRN-payment and
-    supplier-refund rules, but avoids creating display rows when a dashboard
-    needs only closing balances.
+    This is the same read-only projection as
+    :func:`build_supplier_payable_summaries`, extended with the purchase,
+    payment and credit totals used by the supplier list.  It keeps the
+    ledger's legacy-GRN-payment and supplier-refund rules, and loads every
+    GRN / payment once so the query count stays bounded.
+
+    Each value is a plain dictionary so it can be rendered directly by a
+    template or serialised by an API without touching source rows.
     """
     if suppliers is None:
         suppliers = Supplier.query.filter_by(is_active=True).order_by(Supplier.name.asc()).all()
@@ -1352,15 +1357,31 @@ def build_supplier_payable_summaries(suppliers=None):
     for payment in payments:
         payments_by_supplier[payment.supplier_id].append(payment)
 
-    summaries = {}
+    overview = {}
     for supplier in suppliers:
-        balance = _decimal(getattr(supplier, "opening_balance", 0))
+        opening = _decimal(getattr(supplier, "opening_balance", 0))
+        balance = opening
         supplier_name = _norm(getattr(supplier, "name", ""))
         supplier_payments = payments_by_supplier.get(supplier.id, [])
+        total_purchase = Decimal("0.00")
+        total_paid = Decimal("0.00")
+        total_credit = Decimal("0.00")
+        purchase_count = 0
+        last_purchase_at = None
+        last_payment_at = None
+
         for grn in grns:
             if grn.supplier_id != supplier.id and _norm(grn.supplier) != supplier_name:
                 continue
-            balance += _decimal(calculate_grn_total(grn))
+            grn_total = _decimal(calculate_grn_total(grn))
+            total_purchase += grn_total
+            balance += grn_total
+            if grn_total != 0:
+                purchase_count += 1
+            grn_date = getattr(grn, "date_posted", None)
+            if grn_date and (last_purchase_at is None or grn_date > last_purchase_at):
+                last_purchase_at = grn_date
+
             paid_amount = _decimal(getattr(grn, "paid_amount", 0))
             marker = f"[auto_grn_pay:{grn.id}]"
             has_auto_payment = any(
@@ -1369,7 +1390,10 @@ def build_supplier_payable_summaries(suppliers=None):
                 for payment in supplier_payments
             )
             if paid_amount > 0 and not has_auto_payment:
+                total_paid += paid_amount
                 balance -= paid_amount
+                if grn_date and (last_payment_at is None or grn_date > last_payment_at):
+                    last_payment_at = grn_date
 
         for payment in supplier_payments:
             amount = _decimal(getattr(payment, "amount", 0))
@@ -1377,11 +1401,50 @@ def build_supplier_payable_summaries(suppliers=None):
                 continue
             payment_type = _norm(getattr(payment, "payment_type", None))
             is_credit = amount < 0 or payment_type in {"refund", "return", "credit", "supplier return"}
-            balance += abs(amount) if is_credit else -abs(amount)
+            if is_credit:
+                total_credit += abs(amount)
+                balance += abs(amount)
+            else:
+                total_paid += abs(amount)
+                balance -= abs(amount)
+            paid_at = getattr(payment, "date_posted", None)
+            if paid_at and (last_payment_at is None or paid_at > last_payment_at):
+                last_payment_at = paid_at
+
         if abs(balance) < EPS:
             balance = Decimal("0.00")
-        summaries[supplier.id] = _float(balance)
-    return summaries
+        overview[supplier.id] = {
+            "supplier_id": supplier.id,
+            "opening_balance": _float(opening),
+            "total_purchase": _float(total_purchase),
+            "total_paid": _float(total_paid),
+            "total_credit": _float(total_credit),
+            "balance": _float(balance),
+            "outstanding": _float(max(balance, Decimal("0.00"))),
+            "advance": _float(max(-balance, Decimal("0.00"))),
+            "grn_count": purchase_count,
+            "status": (
+                "Payable" if balance > EPS
+                else ("Advance" if balance < -EPS else "Settled")
+            ),
+            "last_purchase_date": last_purchase_at,
+            "last_payment_date": last_payment_at,
+        }
+    return overview
+
+
+def build_supplier_payable_summaries(suppliers=None):
+    """Return authoritative supplier balances with a bounded query count.
+
+    Kept as the lightweight ``{supplier_id: balance}`` contract used by the
+    payables dashboards and ledger-shift previews.  The underlying projection
+    is :func:`build_supplier_payable_overview`, so both representations can
+    never drift apart.
+    """
+    return {
+        supplier_id: info["balance"]
+        for supplier_id, info in build_supplier_payable_overview(suppliers).items()
+    }
 
 
 def _delivery_person_rows(person):
@@ -1601,6 +1664,7 @@ __all__ = [
     "build_client_financial_ledger",
     "build_current_payables",
     "build_supplier_financial_ledger",
+    "build_supplier_payable_overview",
     "build_supplier_payable_summaries",
     "build_delivery_person_financial_ledger",
     "filter_ledger_rows",
