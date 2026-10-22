@@ -78,11 +78,17 @@
   </div>
 </div>
 
+{# The closing card is an all-time summary like its neighbours (opening balance,
+   total debit, total credit), so it must always show the ledger's FINAL closing
+   balance — never the running balance of the last row on the visible page. #}
+{% set final_closing = ledger_closing if ledger_closing is defined else (ledger.closing_balance or 0) %}
+{% set window_closing = filtered_closing if filtered_closing is defined else final_closing %}
+{% set show_window_closing = (filters_active is defined and filters_active) and ((window_closing or 0) - (final_closing or 0))|abs > 0.005 %}
 <div class="row g-3 mb-4">
   <div class="col-6 col-xl-3"><div class="card ledger-card h-100"><div class="card-body"><div class="text-white-50 small">Opening balance</div><div class="fs-4 fw-bold text-info ledger-number">Rs. {{ "{:,.2f}".format((entity.opening_balance or 0)) }}</div>{% if entity.opening_balance_date %}<div class="text-white-50 small">{{ entity.opening_balance_date.strftime('%Y-%m-%d') }}</div>{% endif %}</div></div></div>
   <div class="col-6 col-xl-3"><div class="card ledger-card h-100"><div class="card-body"><div class="text-white-50 small">Total debit</div><div class="fs-4 fw-bold text-warning ledger-number">Rs. {{ "{:,.2f}".format(ledger.total_debit or 0) }}</div></div></div></div>
   <div class="col-6 col-xl-3"><div class="card ledger-card h-100"><div class="card-body"><div class="text-white-50 small">Total credit</div><div class="fs-4 fw-bold text-success ledger-number">Rs. {{ "{:,.2f}".format(ledger.total_credit or 0) }}</div></div></div></div>
-  <div class="col-6 col-xl-3"><div class="card ledger-card h-100"><div class="card-body"><div class="text-white-50 small">Closing balance</div><div class="fs-4 fw-bold {{ 'text-danger' if (ledger.closing_balance or 0) > 0 else 'text-success' }} ledger-number">Rs. {{ "{:,.2f}".format(filtered_closing or 0) }}</div><div class="text-white-50 small">{{ ledger.status }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card ledger-card h-100"><div class="card-body"><div class="text-white-50 small">Closing balance</div><div class="fs-4 fw-bold {{ 'text-danger' if (final_closing or 0) > 0 else 'text-success' }} ledger-number" title="Final closing balance of the complete ledger — unaffected by pagination or filters">Rs. {{ "{:,.2f}".format(final_closing or 0) }}</div><div class="text-white-50 small">{{ ledger.status }}</div>{% if show_window_closing %}<div class="text-white-50 small" title="Running balance carried by the last movement inside the current filtered view">As of filtered view: Rs. {{ "{:,.2f}".format(window_closing or 0) }}</div>{% endif %}</div></div></div>
 </div>
 
 <div class="card ledger-card shadow-sm mb-4">
