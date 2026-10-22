@@ -6,7 +6,11 @@
   .ledger-note { display: inline-block; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; cursor: help; }
   .ledger-number { font-variant-numeric: tabular-nums; }
   .ledger-card { background: #1e293b; border: 1px solid #475569; border-radius: 14px; }
-  @media (max-width: 767px) { .ledger-table { min-width: 1080px; } }
+  /* Itemised GRN lines: one stacked line per material so the name in the
+     description cell lines up with its qty / rate / amount, mirroring the
+     supplier ledger PDF statement. */
+  .ledger-item-line { display: block; line-height: 1.55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 767px) { .ledger-table { min-width: {{ '1320px' if entity_type == 'supplier' else '1080px' }}; } }
 
   .entry-highlighted {
     background-color: rgba(234, 179, 8, 0.22) !important;
@@ -215,7 +219,7 @@
   <div class="card-header bg-transparent border-secondary d-flex justify-content-between align-items-center"><h5 class="mb-0 text-success"><i class="bi bi-journal-text me-2"></i>Financial transaction ledger</h5><span class="badge bg-success">{{ total }} movements</span></div>
   <div class="table-responsive">
     <table class="table table-dark table-hover align-middle mb-0 ledger-table">
-      <thead class="bg-slate-900"><tr><th class="text-center" style="width: 42px;"><i class="bi bi-star text-warning" title="Click star to highlight line"></i></th><th class="ps-4">Date</th><th>Type</th><th>Reference</th><th class="description">Description</th><th>Account</th><th>Notes</th><th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Running balance</th><th class="text-end pe-4">Actions</th></tr></thead>
+      <thead class="bg-slate-900"><tr><th class="text-center" style="width: 42px;"><i class="bi bi-star text-warning" title="Click star to highlight line"></i></th><th class="ps-4">Date</th><th>Type</th><th>Reference</th><th class="description">Description</th><th>Account</th><th>Notes</th>{% if is_supplier %}<th class="text-end">Qty</th><th class="text-end">Rate</th><th class="text-end">Amount</th>{% endif %}<th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Running balance</th><th class="text-end pe-4">Actions</th></tr></thead>
       <tbody>
       {% for row in rows %}
         <tr>
@@ -227,9 +231,15 @@
           <td class="ps-4 text-white-50">{{ row.date.strftime('%Y-%m-%d %H:%M') if row.date and row.date.year > 1 else '—' }}</td>
           <td><span class="badge bg-dark border border-secondary">{{ row.type }}</span></td>
           <td class="text-warning fw-bold">{% if is_supplier and row.source_type == 'SupplierPayment' and row.source_id %}<a class="text-warning text-decoration-none" href="{{ url_for('download_supplier_payment', payment_id=row.source_id, action='print') }}" title="View this supplier payment">{{ row.reference }}</a>{% elif is_supplier and row.source_type == 'GRN' and row.source_id %}<a class="text-warning text-decoration-none" href="{{ url_for('view_bill', bill_no=row.reference, src='grn', src_id=row.source_id) }}" title="View this GRN">{{ row.reference }}</a>{% elif row.reference and row.type not in ['OPENING', 'Carry Forward'] %}<a class="text-warning text-decoration-none" href="{{ url_for('view_bill', bill_no=row.reference) }}">{{ row.reference }}</a>{% elif row.reference %}{{ row.reference }}{% else %}—{% endif %}</td>
-          <td class="description">{{ row.description }}</td>
+          <td class="description">{% if is_supplier and row.item_lines %}<div class="ledger-item-line">{{ row.description }}</div>{% for li in row.item_lines %}<div class="ledger-item-line text-info" title="{{ li.name }}">{{ li.name }}</div>{% endfor %}{% else %}{{ row.description }}{% endif %}</td>
           <td class="text-white-50 small">{{ row.account or '—' }}</td>
           <td class="text-white-50 small"><span class="ledger-note" title="{{ row.note or '' }}">{{ row.note or '—' }}</span></td>
+          {% if is_supplier %}
+          {# --- itemised GRN material lines, same columns as the PDF statement --- #}
+          <td class="text-end ledger-number" data-label="Qty">{% if row.item_lines %}<div class="ledger-item-line text-white-50">&nbsp;</div>{% for li in row.item_lines %}<div class="ledger-item-line">{{ "{:,.2f}".format(li.qty or 0) }}</div>{% endfor %}{% else %}<span class="text-white-50">—</span>{% endif %}</td>
+          <td class="text-end ledger-number" data-label="Rate">{% if row.item_lines %}<div class="ledger-item-line text-white-50">&nbsp;</div>{% for li in row.item_lines %}<div class="ledger-item-line">{{ "{:,.2f}".format(li.rate or 0) }}</div>{% endfor %}{% else %}<span class="text-white-50">—</span>{% endif %}</td>
+          <td class="text-end ledger-number" data-label="Amount">{% if row.item_lines %}<div class="ledger-item-line text-white-50">&nbsp;</div>{% for li in row.item_lines %}<div class="ledger-item-line text-info">{{ "{:,.2f}".format(li.amount or 0) }}</div>{% endfor %}{% else %}<span class="text-white-50">—</span>{% endif %}</td>
+          {% endif %}
           <td class="text-end text-warning ledger-number">{{ "{:,.2f}".format(row.debit or 0) if row.debit else '—' }}</td>
           <td class="text-end text-success ledger-number">{{ "{:,.2f}".format(row.credit or 0) if row.credit else '—' }}</td>
           <td class="text-end fw-bold ledger-number">{{ "{:,.2f}".format(row.balance or 0) }}</td>
@@ -270,7 +280,7 @@
             {% else %}<span class="text-white-50">—</span>{% endif %}
           </td>
         </tr>
-      {% else %}<tr><td colspan="11" class="text-center py-5 text-white-50">No ledger movements match these filters.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="{{ 14 if is_supplier else 11 }}" class="text-center py-5 text-white-50">No ledger movements match these filters.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
