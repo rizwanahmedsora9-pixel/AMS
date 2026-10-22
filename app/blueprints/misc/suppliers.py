@@ -70,48 +70,89 @@ def supplier_ledger(id):
     )
 
 
+def _parse_ledger_date(raw, label):
+    """Parse an optional ``YYYY-MM-DD`` form value; blank means open-ended."""
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, '%Y-%m-%d').date()
+    except ValueError:
+        raise ValueError(f'{label} is not a valid date.')
+
+
 @bp.route('/download_supplier_ledger/<int:id>')
 @login_required
 def download_supplier_ledger(id):
-    """Export all filtered supplier movements (not only the visible page)."""
+    """Download a supplier ledger as PDF or CSV.
+
+    ``scope=full`` (default) exports every movement of the ledger.
+    ``scope=range`` exports only movements between ``start_date`` and
+    ``end_date`` (either may be left blank for an open-ended range).  The
+    balance brought forward into the range is included so the statement
+    always reconciles.
+    """
     supplier = Supplier.query.get_or_404(id)
+    action = (request.args.get('action') or 'download').lower()
+    scope = (request.args.get('scope') or 'full').strip().lower()
+
+    start = end = None
+    if scope == 'range':
+        try:
+            start = _parse_ledger_date(request.args.get('start_date'), 'From date')
+            end = _parse_ledger_date(request.args.get('end_date'), 'To date')
+        except ValueError as exc:
+            response = make_response(str(exc), 400)
+            response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+            return response
+        if start and end and start > end:
+            response = make_response('From date cannot be after To date.', 400)
+            response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+            return response
+
     filters = {
-        'start_date': (request.args.get('start_date') or '').strip(),
-        'end_date': (request.args.get('end_date') or '').strip(),
-        'type_filter': (request.args.get('type') or '').strip(),
-        'query': (request.args.get('q') or '').strip(),
-        'amount_min': (request.args.get('amount_min') or '').strip(),
-        'amount_max': (request.args.get('amount_max') or '').strip(),
-        'account_filter': (request.args.get('account') or '').strip(),
-        'status_filter': (request.args.get('status') or '').strip(),
+        'start_date': start.isoformat() if start else '',
+        'end_date': end.isoformat() if end else '',
+        'type_filter': '',
+        'query': '',
+        'amount_min': '',
+        'amount_max': '',
+        'account_filter': '',
+        'status_filter': '',
     }
     from app.services.financial_ledgers import build_supplier_financial_ledger
     ledger = build_supplier_financial_ledger(supplier, **filters)
-    action = (request.args.get('action') or 'download').lower()
     filtered_rows = ledger['filtered_rows']
 
     if action == 'pdf':
+        from app.services.supplier_ledger_pdf import (
+            period_label, render_supplier_ledger_pdf,
+        )
         generated_at = pk_now()
+        # The first row of a range is the carried-forward balance, so
+        # removing its own movement gives the balance before the range.
+        if filtered_rows:
+            first = filtered_rows[0]
+            brought_forward = float(first.get('balance') or 0) - float(first.get('credit') or 0) + float(first.get('debit') or 0)
+            closing = float(filtered_rows[-1].get('balance') or 0)
+        else:
+            brought_forward = closing = 0.0
         total_debit = sum(float(row.get('debit') or 0) for row in filtered_rows)
         total_credit = sum(float(row.get('credit') or 0) for row in filtered_rows)
-        final_balance = filtered_rows[-1]['balance'] if filtered_rows else ledger['closing_balance']
-        rendered = render_template(
-            'supplier_financial_ledger_pdf.html',
+        pdf_bytes = render_supplier_ledger_pdf(
             supplier=supplier,
+            rows=filtered_rows,
             settings=Settings.query.first(),
-            ledger=filtered_rows,
-            final_balance=final_balance,
+            period=period_label(start, end) if scope == 'range' else period_label(None, None),
+            balance_brought_forward=brought_forward,
             total_debit=total_debit,
             total_credit=total_credit,
+            closing_balance=closing,
             generated_at=generated_at,
+            statement_no=f"SL-{supplier.id}-{generated_at.strftime('%Y%m%d')}",
         )
-        filename = _download_filename('SUPPLIERLEDGER', 'pdf')
-        pdf_response = _try_render_weasy_pdf(rendered, filename, disposition='attachment')
-        if pdf_response:
-            return pdf_response
-        response = make_response(rendered)
-        response.headers['Content-Disposition'] = f'attachment; filename={_download_filename("SUPPLIERLEDGER", "html")}'
-        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+        response = Response(pdf_bytes, mimetype='application/pdf')
+        response.headers['Content-Disposition'] = f'attachment; filename={_download_filename("SUPPLIERLEDGER", "pdf")}'
         _disable_response_cache(response)
         return response
 
@@ -122,14 +163,17 @@ def download_supplier_ledger(id):
         writer = csv.writer(out)
         writer.writerow(['Date', 'Type', 'Reference', 'Description', 'Debit', 'Credit', 'Balance', 'Account', 'Notes'])
         for row in filtered_rows:
+            dt = row.get('date')
             writer.writerow([
-                row['date'].strftime('%Y-%m-%d %H:%M') if row.get('date') and row['date'] != datetime.min else '',
+                dt.strftime('%d-%m-%Y') if dt and dt != datetime.min else '',
                 row.get('type', ''), row.get('reference', ''), row.get('description', ''),
                 f"{row.get('debit', 0):.2f}", f"{row.get('credit', 0):.2f}",
                 f"{row.get('balance', 0):.2f}", row.get('account', ''), row.get('note', ''),
             ])
-        response = Response(out.getvalue(), mimetype='text/csv; charset=utf-8')
-        response.headers['Content-Disposition'] = 'attachment; filename=supplier-ledger.csv'
+        # UTF-8 BOM so Excel opens non-ASCII names correctly.
+        response = Response('\ufeff' + out.getvalue(), mimetype='text/csv; charset=utf-8')
+        response.headers['Content-Disposition'] = f'attachment; filename={_download_filename("SUPPLIERLEDGER", "csv")}'
+        _disable_response_cache(response)
         return response
     rendered = render_template(
         'supplier_ledger_print.html',
