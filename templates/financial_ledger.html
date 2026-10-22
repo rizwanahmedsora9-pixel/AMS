@@ -57,8 +57,7 @@
     {% if is_client %}
       <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_client_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export / download</a>
     {% elif is_supplier %}
-      <a class="btn btn-warning text-dark fw-bold" href="{{ url_for('download_supplier_ledger', id=entity.id, action='pdf') }}"><i class="bi bi-file-earmark-pdf me-1"></i>Download full ledger PDF</a>
-      <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_supplier_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export CSV</a>
+      <button type="button" class="btn btn-warning text-dark fw-bold" data-bs-toggle="modal" data-bs-target="#supplierLedgerDownloadModal"><i class="bi bi-file-earmark-arrow-down me-1"></i>Download ledger</button>
     {% else %}
       <a class="btn btn-outline-success fw-bold" href="{{ url_for('download_delivery_person_ledger', id=entity.id, action='download', start_date=filters.start_date, end_date=filters.end_date, type=filters.type_filter, q=filters.query, amount_min=filters.amount_min, amount_max=filters.amount_max, account=filters.account_filter, status=filters.status_filter) }}"><i class="bi bi-download me-1"></i>Export / download</a>
     {% endif %}
@@ -116,6 +115,89 @@
     </form>
   </div>
 </div>
+
+
+{% if is_supplier %}
+<div class="modal fade" id="supplierLedgerDownloadModal" tabindex="-1" aria-labelledby="supplierLedgerDownloadTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="GET" action="{{ url_for('download_supplier_ledger', id=entity.id) }}" class="modal-content border-secondary" style="background:#1e293b;" id="supplierLedgerDownloadForm">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title text-warning fw-bold" id="supplierLedgerDownloadTitle"><i class="bi bi-file-earmark-arrow-down me-2"></i>Download supplier ledger</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="text-white-50 small mb-3">{{ entity.name }}</div>
+
+        <label class="form-label text-white-50 small fw-bold mb-1">PERIOD</label>
+        <div class="border border-secondary rounded p-3 mb-3" style="background:#0f172a;">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="scope" id="ledgerScopeFull" value="full" checked>
+            <label class="form-check-label text-white" for="ledgerScopeFull">Full ledger <span class="text-white-50 small">— every transaction from the start</span></label>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="scope" id="ledgerScopeRange" value="range">
+            <label class="form-check-label text-white" for="ledgerScopeRange">Date range <span class="text-white-50 small">— choose the dates below</span></label>
+          </div>
+          <div class="row g-2 ps-4" id="ledgerRangeFields">
+            <div class="col-6">
+              <label class="form-label text-white-50 small mb-1" for="ledgerStartDate">From</label>
+              <input type="date" class="form-control bg-dark text-white border-secondary" id="ledgerStartDate" name="start_date" value="{{ filters.start_date or '' }}" disabled>
+            </div>
+            <div class="col-6">
+              <label class="form-label text-white-50 small mb-1" for="ledgerEndDate">To</label>
+              <input type="date" class="form-control bg-dark text-white border-secondary" id="ledgerEndDate" name="end_date" value="{{ filters.end_date or '' }}" disabled>
+            </div>
+          </div>
+        </div>
+
+        <label class="form-label text-white-50 small fw-bold mb-1">FORMAT</label>
+        <div class="d-flex gap-2">
+          <input type="radio" class="btn-check" name="action" id="ledgerFormatPdf" value="pdf" checked>
+          <label class="btn btn-outline-warning flex-fill fw-bold" for="ledgerFormatPdf"><i class="bi bi-file-earmark-pdf me-1"></i>PDF statement</label>
+          <input type="radio" class="btn-check" name="action" id="ledgerFormatCsv" value="download">
+          <label class="btn btn-outline-success flex-fill fw-bold" for="ledgerFormatCsv"><i class="bi bi-filetype-csv me-1"></i>Excel (CSV)</label>
+        </div>
+        <div class="text-white-50 small mt-2">Search, type and status filters on this page are not applied to downloads.</div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-warning text-dark fw-bold"><i class="bi bi-download me-1"></i>Download</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+  (function () {
+    var form = document.getElementById('supplierLedgerDownloadForm');
+    if (!form) return;
+    var range = document.getElementById('ledgerScopeRange');
+    var full = document.getElementById('ledgerScopeFull');
+    var start = document.getElementById('ledgerStartDate');
+    var end = document.getElementById('ledgerEndDate');
+    function sync() {
+      var on = range.checked;
+      start.disabled = !on;
+      end.disabled = !on;
+    }
+    range.addEventListener('change', sync);
+    full.addEventListener('change', sync);
+    form.addEventListener('submit', function (e) {
+      if (range.checked && start.value && end.value && start.value > end.value) {
+        e.preventDefault();
+        end.setCustomValidity('To date must be on or after From date.');
+        end.reportValidity();
+        return;
+      }
+      end.setCustomValidity('');
+      var modalEl = document.getElementById('supplierLedgerDownloadModal');
+      if (window.bootstrap && modalEl) {
+        var inst = window.bootstrap.Modal.getInstance(modalEl);
+        if (inst) inst.hide();
+      }
+    });
+  })();
+</script>
+{% endif %}
 
 {% if is_client and obligations %}
 <div class="card ledger-card shadow-sm mb-4">
