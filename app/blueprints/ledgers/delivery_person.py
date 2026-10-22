@@ -10,6 +10,7 @@ from uuid import uuid4
 from app.services.financial_ledgers import (
     build_delivery_person_financial_ledger,
     filter_ledger_rows,
+    ledger_page_closing,
 )
 
 
@@ -34,7 +35,9 @@ def _driver_page(ledger, filters):
     pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, pages)
     rows = selected[(page - 1) * per_page: page * per_page]
-    closing = rows[-1]['balance'] if rows else ledger['closing_balance']
+    # Same rule as the supplier ledger: the closing balance belongs to the
+    # whole ledger, never to the page currently on screen.
+    closing = ledger_page_closing(ledger, filters)
     return rows, page, per_page, total, pages, closing
 
 
@@ -64,9 +67,11 @@ def _render_driver_ledger(person, *, filters=None):
         per_page=per_page,
         total=total,
         total_pages=pages,
-        filtered_closing=closing,
+        ledger_closing=closing['final'],
+        filtered_closing=closing['filtered'],
+        filters_active=closing['filters_active'],
         selector_entities=people,
-        current_payable=max(0.0, float(ledger['closing_balance'] or 0)),
+        current_payable=max(0.0, closing['final']),
         back_url=url_for('delivery_persons_page'),
         opening_url=url_for('delivery_person_opening_balance', id=person.id),
         today_date=pk_today().strftime('%Y-%m-%d'),

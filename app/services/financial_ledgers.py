@@ -1206,6 +1206,36 @@ def filter_ledger_rows(rows, *, start_date=None, end_date=None, type_filter="", 
     return selected
 
 
+def ledger_page_closing(ledger, filters=None):
+    """Closing balances a paginated ledger page must render.
+
+    Ledger pages paginate their detail rows, but the summary cards are an
+    all-time projection of the whole ledger (opening balance, total debit and
+    total credit are never narrowed by the page or the filters).  The closing
+    card therefore has to show the *final* closing balance, not the running
+    balance of the last row that happens to be visible — that older behaviour
+    made the card read as a mid-history figure on every page except the last.
+
+    Returns a dict with:
+
+    ``final``
+        The authoritative closing balance of the complete ledger.  This is what
+        the summary card shows, on every page and under every filter.
+    ``filtered``
+        The running balance at the end of the filtered window.  Equal to
+        ``final`` when no filter narrows the ledger; otherwise it is the
+        balance the last visible movement carries, offered only as a secondary
+        "as of" hint so filtering never hides information.
+    ``filters_active``
+        Whether any narrowing filter was supplied.
+    """
+    final = _float(ledger.get("closing_balance") or 0)
+    rows = ledger.get("filtered_rows") or []
+    filtered = _float(rows[-1].get("balance") or 0) if rows else final
+    active = any(str(value or "").strip() for value in (filters or {}).values())
+    return {"final": final, "filtered": filtered, "filters_active": bool(active)}
+
+
 def _supplier_rows(supplier):
     rows = []
     opening = _decimal(getattr(supplier, "opening_balance", 0))

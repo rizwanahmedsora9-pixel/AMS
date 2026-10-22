@@ -29,7 +29,10 @@ def supplier_ledger(id):
         'account_filter': (request.args.get('account') or '').strip(),
         'status_filter': (request.args.get('status') or '').strip(),
     }
-    from app.services.financial_ledgers import build_supplier_financial_ledger
+    from app.services.financial_ledgers import (
+        build_supplier_financial_ledger,
+        ledger_page_closing,
+    )
     ledger = build_supplier_financial_ledger(supplier, **filters)
     selected = ledger['filtered_rows']
     page = max(request.args.get('page', 1, type=int) or 1, 1)
@@ -38,7 +41,10 @@ def supplier_ledger(id):
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, total_pages)
     page_rows = selected[(page - 1) * per_page: page * per_page]
-    closing = page_rows[-1]['balance'] if page_rows else ledger['closing_balance']
+    # The closing balance is a property of the ledger, never of the visible
+    # page: paginate the detail rows but keep the summary card on the final
+    # closing balance of the whole ledger.
+    closing = ledger_page_closing(ledger, filters)
     suppliers = Supplier.query.filter(Supplier.is_active == True).order_by(Supplier.name.asc(), Supplier.id.asc()).all()
     return render_template(
         'financial_ledger.html',
@@ -53,9 +59,11 @@ def supplier_ledger(id):
         per_page=per_page,
         total=total,
         total_pages=total_pages,
-        filtered_closing=closing,
+        ledger_closing=closing['final'],
+        filtered_closing=closing['filtered'],
+        filters_active=closing['filters_active'],
         selector_entities=suppliers,
-        current_payable=max(0.0, float(ledger['closing_balance'] or 0)),
+        current_payable=max(0.0, closing['final']),
         back_url=url_for('suppliers'),
         opening_url=url_for('supplier_opening_balance', id=supplier.id),
         today_date=pk_today().strftime('%Y-%m-%d'),
